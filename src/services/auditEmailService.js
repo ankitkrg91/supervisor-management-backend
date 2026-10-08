@@ -8,7 +8,7 @@ import prisma from "../config/prisma.js";
 
 const APPS_SCRIPT_URL =
     process.env.GOOGLE_APPS_SCRIPT_URL ||
-    "https://script.google.com/macros/s/AKfycbxvNKy9tcYc1KRMu0OrA0MRDNODzwzIW9F54ceyljk-4TnDsuYY-mRyXHPQGtPIwlmKNw/exec";
+    "https://script.google.com/macros/s/AKfycbyhMb46Rjbe98HzdGzCZ2U2F5kDkSREqDZyjbq_lz_w_5HKjyEKNyFkiLmtX9Jc3ePZQw/exec";
 
 
 /*

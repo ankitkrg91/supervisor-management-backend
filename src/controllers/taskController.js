@@ -270,87 +270,83 @@ const createTask = async (req, res) => {
         // ----------------------------------------------------
         // CREATE TASK
         // ----------------------------------------------------
-        const task =
-            await prisma.task.create({
-                data: {
-                    title,
+        const task = await prisma.task.create({
+            data: {
+                title,
 
-                    description:
-                        description || null,
+                description:
+                    description || null,
 
-                    clientEmail:
-                        normalizedClientEmail,
+                clientEmail:
+                    normalizedClientEmail,
 
-                    priority:
-                        priority || "MEDIUM",
+                priority:
+                    priority || "MEDIUM",
 
-                    scheduledAt:
-                        parsedScheduledAt,
+                scheduledAt:
+                    parsedScheduledAt,
 
-                    showInAdvance:
-                        normalizedShowInAdvance,
+                showInAdvance:
+                    normalizedShowInAdvance,
 
-                    showAfterMissed:
-                        normalizedShowAfterMissed,
+                showAfterMissed:
+                    normalizedShowAfterMissed,
 
-                    wholeDay:
-                        normalizedWholeDay,
+                wholeDay:
+                    normalizedWholeDay,
 
-                    assignedToId,
+                assignedToId,
 
-                    assignedById:
-                        req.user.userId,
+                assignedById:
+                    req.user.userId,
 
-                    siteId,
+                siteId,
 
-                    campaignId:
-                        campaignId || null,
-                },
+                campaignId:
+                    campaignId || null,
+            },
 
-                include: {
-                    assignedTo: {
-                        select: {
-                            id: true,
-                            name: true,
-                            email: true,
-                            phone: true,
-                            role: true,
-                            status: true,
-                        },
-                    },
-
-                    assignedBy: {
-                        select: {
-                            id: true,
-                            name: true,
-                            email: true,
-                            role: true,
-                        },
-                    },
-
-                    site: {
-                        select: {
-                            id: true,
-                            name: true,
-                            siteCode: true,
-                            city: true,
-                            state: true,
-                        },
-                    },
-
-                    campaign: {
-                        select: {
-                            id: true,
-                            name: true,
-                            status: true,
-                        },
+            include: {
+                assignedTo: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        phone: true,
+                        role: true,
+                        status: true,
                     },
                 },
-            });
 
-        // ----------------------------------------------------
-        // RESPONSE
-        // ----------------------------------------------------
+                assignedBy: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        role: true,
+                    },
+                },
+
+                site: {
+                    select: {
+                        id: true,
+                        name: true,
+                        siteCode: true,
+                        city: true,
+                        state: true,
+                    },
+                },
+
+                campaign: {
+                    select: {
+                        id: true,
+                        name: true,
+                        status: true,
+                    },
+                },
+            },
+        });
+
         return res.status(201).json({
             success: true,
             message:
@@ -379,15 +375,6 @@ const createTask = async (req, res) => {
  * ============================================================
  * GET TASKS
  * ============================================================
- *
- * SUPER_ADMIN:
- * - Can filter by site
- * - Can filter by Supervisor
- *
- * SUPERVISOR:
- * - Can see only tasks assigned to themselves
- * - Can receive tasks from different sites
- * - Cannot override assignedToId
  */
 const getTasks = async (req, res) => {
     try {
@@ -435,20 +422,6 @@ const getTasks = async (req, res) => {
         if (
             req.user.role === "SUPERVISOR"
         ) {
-            /*
-             * IMPORTANT:
-             * Do NOT filter by Supervisor's User.siteId.
-             *
-             * A Supervisor may have tasks such as:
-             *
-             * Sep 25 -> Site A
-             * Sep 26 -> Site B
-             * Sep 27 -> Site C
-             *
-             * All are valid because they are assigned to
-             * the same Supervisor.
-             */
-
             where.assignedToId =
                 req.user.userId;
 
@@ -494,21 +467,21 @@ const getTasks = async (req, res) => {
         }
 
         // ----------------------------------------------------
-        // NON-SUPERVISOR SITE FILTER
+        // SITE FILTER
         // ----------------------------------------------------
         else if (siteId) {
             where.siteId = siteId;
         }
 
         // ----------------------------------------------------
-        // STATUS FILTER
+        // STATUS
         // ----------------------------------------------------
         if (status) {
             where.status = status;
         }
 
         // ----------------------------------------------------
-        // PRIORITY FILTER
+        // PRIORITY
         // ----------------------------------------------------
         if (priority) {
             where.priority = priority;
@@ -554,8 +527,18 @@ const getTasks = async (req, res) => {
                                     "insensitive",
                             },
                         },
+
                         {
                             description: {
+                                contains:
+                                    searchQuery,
+                                mode:
+                                    "insensitive",
+                            },
+                        },
+
+                        {
+                            clientEmail: {
                                 contains:
                                     searchQuery,
                                 mode:
@@ -575,7 +558,7 @@ const getTasks = async (req, res) => {
             limitNumber;
 
         // ----------------------------------------------------
-        // FETCH TASKS + TOTAL COUNT
+        // FETCH TASKS
         // ----------------------------------------------------
         const [
             tasks,
@@ -625,7 +608,8 @@ const getTasks = async (req, res) => {
                 },
 
                 orderBy: {
-                    scheduledAt: "desc",
+                    scheduledAt:
+                        "desc",
                 },
 
                 skip,
@@ -638,9 +622,6 @@ const getTasks = async (req, res) => {
             }),
         ]);
 
-        // ----------------------------------------------------
-        // RESPONSE
-        // ----------------------------------------------------
         return res.status(200).json({
             success: true,
 
@@ -648,9 +629,14 @@ const getTasks = async (req, res) => {
                 tasks,
 
                 pagination: {
-                    page: pageNumber,
-                    limit: limitNumber,
+                    page:
+                        pageNumber,
+
+                    limit:
+                        limitNumber,
+
                     total,
+
                     totalPages:
                         Math.ceil(
                             total /
@@ -669,7 +655,8 @@ const getTasks = async (req, res) => {
             success: false,
             message:
                 "Failed to get tasks",
-            error: error.message,
+            error:
+                error.message,
         });
     }
 };
@@ -680,17 +667,18 @@ const getTasks = async (req, res) => {
  * GET TASK BY ID
  * ============================================================
  */
-const getTaskById = async (req, res) => {
+const getTaskById = async (
+    req,
+    res
+) => {
     try {
         console.log(
             "🔥 GET TASK BY ID CONTROLLER IS RUNNING"
         );
 
-        const { id } = req.params;
+        const { id } =
+            req.params;
 
-        // ----------------------------------------------------
-        // FETCH TASK
-        // ----------------------------------------------------
         const task =
             await prisma.task.findUnique({
                 where: {
@@ -745,13 +733,11 @@ const getTaskById = async (req, res) => {
                 },
             });
 
-        // ----------------------------------------------------
-        // TASK NOT FOUND
-        // ----------------------------------------------------
         if (!task) {
             return res.status(404).json({
                 success: false,
-                message: "Task not found",
+                message:
+                    "Task not found",
             });
         }
 
@@ -761,13 +747,6 @@ const getTaskById = async (req, res) => {
         if (
             req.user.role === "SUPERVISOR"
         ) {
-            /*
-             * Supervisor only needs to be the assigned
-             * Supervisor for this task.
-             *
-             * Task site may be different from User.siteId.
-             */
-
             if (
                 task.assignedToId !==
                 req.user.userId
@@ -791,13 +770,11 @@ const getTaskById = async (req, res) => {
         ) {
             return res.status(404).json({
                 success: false,
-                message: "Task not found",
+                message:
+                    "Task not found",
             });
         }
 
-        // ----------------------------------------------------
-        // RESPONSE
-        // ----------------------------------------------------
         return res.status(200).json({
             success: true,
 
@@ -815,7 +792,8 @@ const getTaskById = async (req, res) => {
             success: false,
             message:
                 "Failed to get task",
-            error: error.message,
+            error:
+                error.message,
         });
     }
 };
@@ -825,22 +803,6 @@ const getTaskById = async (req, res) => {
  * ============================================================
  * UPDATE TASK STATUS
  * ============================================================
- *
- * Allowed lifecycle:
- *
- * SCHEDULED
- *   -> IN_PROGRESS
- *   -> CANCELLED
- *
- * IN_PROGRESS
- *   -> COMPLETED
- *   -> CANCELLED
- *
- * COMPLETED
- *   -> no transition
- *
- * CANCELLED
- *   -> no transition
  */
 const updateTaskStatus = async (
     req,
@@ -906,7 +868,6 @@ const updateTaskStatus = async (
             });
         }
 
-        // Only Supervisor tasks
         if (
             task.assignedTo?.role !==
             "SUPERVISOR"
@@ -917,13 +878,6 @@ const updateTaskStatus = async (
                     "Only Supervisor tasks can be updated",
             });
         }
-
-        // Supervisor security:
-        // ownership is based on assignedToId.
-        //
-        // Do NOT use User.siteId here because
-        // one Supervisor may have tasks at
-        // multiple sites.
 
         if (
             req.user.role ===
@@ -941,7 +895,6 @@ const updateTaskStatus = async (
             }
         }
 
-        // Allowed lifecycle
         const allowedTransitions = {
             SCHEDULED: [
                 "IN_PROGRESS",
@@ -1047,547 +1000,732 @@ const updateTaskStatus = async (
  * ============================================================
  * REASSIGN TASK
  * ============================================================
- *
- * Task may be reassigned to any active Supervisor.
- *
- * Target Supervisor does NOT have to belong to
- * the task's site.
  */
-const reassignTask =
-    async (req, res) => {
-        try {
-            const { id } =
-                req.params;
+const reassignTask = async (
+    req,
+    res
+) => {
+    try {
+        const { id } =
+            req.params;
 
-            const {
-                assignedToId,
-            } = req.body;
+        const {
+            assignedToId,
+        } = req.body;
 
-            // ------------------------------------------------
-            // REQUIRED ASSIGNED USER
-            // ------------------------------------------------
-            if (!assignedToId) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Assigned user ID is required",
-                });
-            }
-
-            // ------------------------------------------------
-            // FIND TASK
-            // ------------------------------------------------
-            const task =
-                await prisma.task.findUnique({
-                    where: {
-                        id,
-                    },
-
-                    include: {
-                        assignedTo: {
-                            select: {
-                                id: true,
-                                name: true,
-                                email: true,
-                                role: true,
-                                status: true,
-                                siteId: true,
-                            },
-                        },
-
-                        site: {
-                            select: {
-                                id: true,
-                                name: true,
-                                siteCode: true,
-                            },
-                        },
-                    },
-                });
-
-            if (!task) {
-                return res.status(404).json({
-                    success: false,
-                    message:
-                        "Task not found",
-                });
-            }
-
-            // ------------------------------------------------
-            // SUPERVISOR ACCESS
-            // ------------------------------------------------
-            if (
-                req.user.role ===
-                "SUPERVISOR"
-            ) {
-                if (
-                    task.assignedToId !==
-                    req.user.userId
-                ) {
-                    return res.status(403).json({
-                        success: false,
-                        message:
-                            "You do not have access to this task",
-                    });
-                }
-            }
-
-            // ------------------------------------------------
-            // COMPLETED / CANCELLED
-            // ------------------------------------------------
-            if (
-                task.status ===
-                "COMPLETED" ||
-                task.status ===
-                "CANCELLED"
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        `Cannot reassign a ${task.status.toLowerCase()} task`,
-                });
-            }
-
-            // ------------------------------------------------
-            // VALIDATE TARGET SUPERVISOR
-            // ------------------------------------------------
-            const assignedUser =
-                await prisma.user.findUnique({
-                    where: {
-                        id: assignedToId,
-                    },
-
-                    select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        role: true,
-                        status: true,
-                        siteId: true,
-                    },
-                });
-
-            if (!assignedUser) {
-                return res.status(404).json({
-                    success: false,
-                    message:
-                        "Assigned user not found",
-                });
-            }
-
-            if (
-                assignedUser.status !==
-                "ACTIVE"
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Assigned user is inactive",
-                });
-            }
-
-            if (
-                assignedUser.role !==
-                "SUPERVISOR"
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Tasks can only be assigned to supervisors",
-                });
-            }
-
-            // ------------------------------------------------
-            // REASSIGN
-            // ------------------------------------------------
-            const updatedTask =
-                await prisma.task.update({
-                    where: {
-                        id,
-                    },
-
-                    data: {
-                        assignedToId:
-                            assignedToId,
-                    },
-
-                    include: {
-                        assignedTo: {
-                            select: {
-                                id: true,
-                                name: true,
-                                email: true,
-                                role: true,
-                            },
-                        },
-
-                        assignedBy: {
-                            select: {
-                                id: true,
-                                name: true,
-                                email: true,
-                                role: true,
-                            },
-                        },
-
-                        site: {
-                            select: {
-                                id: true,
-                                name: true,
-                                siteCode: true,
-                            },
-                        },
-                    },
-                });
-
-            // ------------------------------------------------
-            // RESPONSE
-            // ------------------------------------------------
-            return res.status(200).json({
-                success: true,
-
-                message:
-                    "Task reassigned successfully",
-
-                data: {
-                    task: updatedTask,
-                },
-            });
-        } catch (error) {
-            console.error(
-                "Reassign task error:",
-                error
-            );
-
-            return res.status(500).json({
+        if (!assignedToId) {
+            return res.status(400).json({
                 success: false,
                 message:
-                    "Failed to reassign task",
+                    "Assigned user ID is required",
             });
         }
-    };
+
+        const task =
+            await prisma.task.findUnique({
+                where: {
+                    id,
+                },
+
+                include: {
+                    assignedTo: {
+                        select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            role: true,
+                            status: true,
+                            siteId: true,
+                        },
+                    },
+
+                    site: {
+                        select: {
+                            id: true,
+                            name: true,
+                            siteCode: true,
+                        },
+                    },
+                },
+            });
+
+        if (!task) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Task not found",
+            });
+        }
+
+        if (
+            req.user.role ===
+            "SUPERVISOR"
+        ) {
+            if (
+                task.assignedToId !==
+                req.user.userId
+            ) {
+                return res.status(403).json({
+                    success: false,
+                    message:
+                        "You do not have access to this task",
+                });
+            }
+        }
+
+        if (
+            task.status ===
+            "COMPLETED" ||
+            task.status ===
+            "CANCELLED"
+        ) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    `Cannot reassign a ${task.status.toLowerCase()} task`,
+            });
+        }
+
+        const assignedUser =
+            await prisma.user.findUnique({
+                where: {
+                    id: assignedToId,
+                },
+
+                select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    role: true,
+                    status: true,
+                    siteId: true,
+                },
+            });
+
+        if (!assignedUser) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Assigned user not found",
+            });
+        }
+
+        if (
+            assignedUser.status !==
+            "ACTIVE"
+        ) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Assigned user is inactive",
+            });
+        }
+
+        if (
+            assignedUser.role !==
+            "SUPERVISOR"
+        ) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Tasks can only be assigned to supervisors",
+            });
+        }
+
+        const updatedTask =
+            await prisma.task.update({
+                where: {
+                    id,
+                },
+
+                data: {
+                    assignedToId:
+                        assignedToId,
+                },
+
+                include: {
+                    assignedTo: {
+                        select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            role: true,
+                        },
+                    },
+
+                    assignedBy: {
+                        select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            role: true,
+                        },
+                    },
+
+                    site: {
+                        select: {
+                            id: true,
+                            name: true,
+                            siteCode: true,
+                        },
+                    },
+                },
+            });
+
+        return res.status(200).json({
+            success: true,
+
+            message:
+                "Task reassigned successfully",
+
+            data: {
+                task:
+                    updatedTask,
+            },
+        });
+    } catch (error) {
+        console.error(
+            "Reassign task error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to reassign task",
+        });
+    }
+};
 
 
 /*
  * ============================================================
  * REASSIGN BULK TASKS
  * ============================================================
+ *
+ * Excel fields:
+ * - title
+ * - scheduledAt
+ * - supervisorEmail
+ * - siteCode
+ * - clientEmail (optional)
+ *
+ * Target supervisor UUID comes from assignedToId
+ * selected in the frontend dropdown.
  */
-const reassignBulkTasks =
-    async (req, res) => {
-        try {
-            const {
-                tasks,
-                assignedToId,
-            } = req.body;
+const reassignBulkTasks = async (
+    req,
+    res
+) => {
+    try {
+        const {
+            tasks,
+            assignedToId,
+        } = req.body;
 
-            // ------------------------------------------------
-            // BASIC VALIDATION
-            // ------------------------------------------------
-            if (
-                !Array.isArray(tasks) ||
-                tasks.length === 0
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "tasks must be a non-empty array",
-                });
-            }
-
-            if (!assignedToId) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "assignedToId is required",
-                });
-            }
-
-            if (tasks.length > 500) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Maximum 500 tasks can be reassigned at once",
-                });
-            }
-
-            // ------------------------------------------------
-            // VALIDATE TARGET SUPERVISOR
-            // ------------------------------------------------
-            const assignedUser =
-                await prisma.user.findUnique({
-                    where: {
-                        id: assignedToId,
-                    },
-
-                    select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        role: true,
-                        status: true,
-                        siteId: true,
-                    },
-                });
-
-            if (!assignedUser) {
-                return res.status(404).json({
-                    success: false,
-                    message:
-                        "Target supervisor not found",
-                });
-            }
-
-            if (
-                assignedUser.status !==
-                "ACTIVE"
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Target supervisor is inactive",
-                });
-            }
-
-            if (
-                assignedUser.role !==
-                "SUPERVISOR"
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Tasks can only be reassigned to supervisors",
-                });
-            }
-
-            // ------------------------------------------------
-            // PROCESS
-            // ------------------------------------------------
-            const successfulTasks = [];
-            const failedTasks = [];
-
-            for (
-                let index = 0;
-                index < tasks.length;
-                index++
-            ) {
-                const item =
-                    tasks[index];
-
-                const taskId =
-                    typeof item === "string"
-                        ? item.trim()
-                        : String(
-                            item?.taskId ??
-                            ""
-                        ).trim();
-
-                const excelRow =
-                    Number(item?.row) ||
-                    index + 2;
-
-                try {
-                    // TASK ID
-                    if (!taskId) {
-                        throw new Error(
-                            "Task ID is required"
-                        );
-                    }
-
-                    // FIND TASK
-                    const task =
-                        await prisma.task.findUnique({
-                            where: {
-                                id: taskId,
-                            },
-
-                            include: {
-                                assignedTo: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        email: true,
-                                        role: true,
-                                        status: true,
-                                    },
-                                },
-
-                                site: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        siteCode: true,
-                                    },
-                                },
-                            },
-                        });
-
-                    if (!task) {
-                        throw new Error(
-                            "Task not found"
-                        );
-                    }
-
-                    // SUPERVISOR TASK ONLY
-                    if (
-                        task.assignedTo?.role !==
-                        "SUPERVISOR"
-                    ) {
-                        throw new Error(
-                            "Only Supervisor tasks can be reassigned"
-                        );
-                    }
-
-                    // SUPERVISOR ACCESS
-                    if (
-                        req.user.role ===
-                        "SUPERVISOR"
-                    ) {
-                        if (
-                            task.assignedToId !==
-                            req.user.userId
-                        ) {
-                            throw new Error(
-                                "You do not have access to this task"
-                            );
-                        }
-                    }
-
-                    // COMPLETED TASK
-                    if (
-                        task.status ===
-                        "COMPLETED"
-                    ) {
-                        throw new Error(
-                            "Cannot reassign a completed task"
-                        );
-                    }
-
-                    // CANCELLED TASK
-                    if (
-                        task.status ===
-                        "CANCELLED"
-                    ) {
-                        throw new Error(
-                            "Cannot reassign a cancelled task"
-                        );
-                    }
-
-                    // SAME SUPERVISOR
-                    if (
-                        task.assignedToId ===
-                        assignedToId
-                    ) {
-                        throw new Error(
-                            "Task is already assigned to this supervisor"
-                        );
-                    }
-
-                    // REASSIGN
-                    const updatedTask =
-                        await prisma.task.update({
-                            where: {
-                                id: task.id,
-                            },
-
-                            data: {
-                                assignedToId:
-                                    assignedToId,
-                            },
-
-                            include: {
-                                assignedTo: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        email: true,
-                                        role: true,
-                                        status: true,
-                                    },
-                                },
-
-                                assignedBy: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        email: true,
-                                        role: true,
-                                    },
-                                },
-
-                                site: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        siteCode: true,
-                                    },
-                                },
-
-                                campaign: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        status: true,
-                                    },
-                                },
-                            },
-                        });
-
-                    successfulTasks.push(
-                        updatedTask
-                    );
-                } catch (error) {
-                    failedTasks.push({
-                        row:
-                            excelRow,
-
-                        taskId:
-                            taskId ||
-                            null,
-
-                        error:
-                            error.message,
-                    });
-                }
-            }
-
-            // ------------------------------------------------
-            // RESPONSE
-            // ------------------------------------------------
-            return res.status(201).json({
-                success: true,
-
-                message:
-                    "Bulk task reassignment completed",
-
-                data: {
-                    total:
-                        tasks.length,
-
-                    successful:
-                        successfulTasks.length,
-
-                    failed:
-                        failedTasks.length,
-
-                    successfulTasks,
-
-                    failedTasks,
-                },
-            });
-        } catch (error) {
-            console.error(
-                "Reassign bulk tasks error:",
-                error
-            );
-
-            return res.status(500).json({
+        // ----------------------------------------------------
+        // BASIC VALIDATION
+        // ----------------------------------------------------
+        if (
+            !Array.isArray(tasks) ||
+            tasks.length === 0
+        ) {
+            return res.status(400).json({
                 success: false,
                 message:
-                    "Failed to reassign bulk tasks",
+                    "tasks must be a non-empty array",
             });
         }
-    };
+
+        if (!assignedToId) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Target supervisor is required",
+            });
+        }
+
+        if (tasks.length > 500) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Maximum 500 tasks can be reassigned at once",
+            });
+        }
+
+        // ----------------------------------------------------
+        // VALIDATE TARGET SUPERVISOR
+        // ----------------------------------------------------
+        const targetSupervisor =
+            await prisma.user.findUnique({
+                where: {
+                    id: assignedToId,
+                },
+
+                select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    role: true,
+                    status: true,
+                    siteId: true,
+                },
+            });
+
+        if (!targetSupervisor) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Target supervisor not found",
+            });
+        }
+
+        if (
+            targetSupervisor.role !==
+            "SUPERVISOR"
+        ) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Target user must be a Supervisor",
+            });
+        }
+
+        if (
+            targetSupervisor.status !==
+            "ACTIVE"
+        ) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Target supervisor is inactive",
+            });
+        }
+
+        const successfulTasks = [];
+        const failedTasks = [];
+
+        // ----------------------------------------------------
+        // PROCESS EACH EXCEL ROW
+        // ----------------------------------------------------
+        for (
+            let index = 0;
+            index < tasks.length;
+            index++
+        ) {
+            const item =
+                tasks[index];
+
+            const title =
+                typeof item?.title ===
+                    "string"
+                    ? item.title.trim()
+                    : "";
+
+            const supervisorEmail =
+                typeof item?.supervisorEmail ===
+                    "string"
+                    ? item.supervisorEmail
+                        .trim()
+                        .toLowerCase()
+                    : "";
+
+            const siteCode =
+                typeof item?.siteCode ===
+                    "string"
+                    ? item.siteCode.trim()
+                    : "";
+
+            const clientEmail =
+                typeof item?.clientEmail ===
+                    "string"
+                    ? item.clientEmail
+                        .trim()
+                        .toLowerCase()
+                    : "";
+
+            const scheduledAt =
+                item?.scheduledAt;
+
+            const excelRow =
+                Number(item?.row) ||
+                index + 2;
+
+            try {
+                // --------------------------------------------
+                // REQUIRED FIELDS
+                // --------------------------------------------
+                if (
+                    !title ||
+                    !scheduledAt ||
+                    !supervisorEmail ||
+                    !siteCode
+                ) {
+                    throw new Error(
+                        "title, scheduledAt, supervisorEmail and siteCode are required"
+                    );
+                }
+
+                // --------------------------------------------
+                // DATE
+                // --------------------------------------------
+                const parsedScheduledAt =
+                    new Date(
+                        scheduledAt
+                    );
+
+                if (
+                    Number.isNaN(
+                        parsedScheduledAt.getTime()
+                    )
+                ) {
+                    throw new Error(
+                        "Invalid scheduled date"
+                    );
+                }
+
+                // --------------------------------------------
+                // FIND CURRENT SUPERVISOR
+                // --------------------------------------------
+                const currentSupervisor =
+                    await prisma.user.findFirst({
+                        where: {
+                            email: {
+                                equals:
+                                    supervisorEmail,
+                                mode:
+                                    "insensitive",
+                            },
+
+                            role:
+                                "SUPERVISOR",
+
+                            status:
+                                "ACTIVE",
+                        },
+
+                        select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            role: true,
+                            status: true,
+                        },
+                    });
+
+                if (!currentSupervisor) {
+                    throw new Error(
+                        `Active Supervisor not found for email: ${supervisorEmail}`
+                    );
+                }
+
+                // --------------------------------------------
+                // FIND TASK SITE
+                // --------------------------------------------
+                const site =
+                    await prisma.site.findFirst({
+                        where: {
+                            status:
+                                "ACTIVE",
+
+                            siteCode: {
+                                equals:
+                                    siteCode,
+                                mode:
+                                    "insensitive",
+                            },
+                        },
+
+                        select: {
+                            id: true,
+                            name: true,
+                            siteCode: true,
+                            status: true,
+                        },
+                    });
+
+                if (!site) {
+                    throw new Error(
+                        `Active site not found for Site Code: ${siteCode}`
+                    );
+                }
+
+                // --------------------------------------------
+                // TARGET SUPERVISOR MUST BELONG
+                // TO THE TASK SITE
+                // --------------------------------------------
+                if (
+                    targetSupervisor.siteId &&
+                    targetSupervisor.siteId !==
+                    site.id
+                ) {
+                    throw new Error(
+                        `Target supervisor is not assigned to site ${site.siteCode}`
+                    );
+                }
+
+                // --------------------------------------------
+                // FIND EXACT TASK
+                // --------------------------------------------
+                const taskWhere = {
+                    title: {
+                        equals:
+                            title,
+                        mode:
+                            "insensitive",
+                    },
+
+                    scheduledAt:
+                        parsedScheduledAt,
+
+                    assignedToId:
+                        currentSupervisor.id,
+
+                    siteId:
+                        site.id,
+                };
+
+                // --------------------------------------------
+                // OPTIONAL CLIENT EMAIL
+                // --------------------------------------------
+                if (clientEmail) {
+                    taskWhere.clientEmail =
+                        clientEmail;
+                }
+
+                const matchingTasks =
+                    await prisma.task.findMany({
+                        where:
+                            taskWhere,
+
+                        include: {
+                            assignedTo: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    email: true,
+                                    role: true,
+                                    status: true,
+                                },
+                            },
+
+                            assignedBy: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    email: true,
+                                    role: true,
+                                },
+                            },
+
+                            site: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    siteCode: true,
+                                },
+                            },
+
+                            campaign: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    status: true,
+                                },
+                            },
+                        },
+                    });
+
+                // --------------------------------------------
+                // TASK NOT FOUND
+                // --------------------------------------------
+                if (
+                    matchingTasks.length ===
+                    0
+                ) {
+                    throw new Error(
+                        "Task not found for the provided title, scheduledAt, supervisorEmail and siteCode"
+                    );
+                }
+
+                // --------------------------------------------
+                // DUPLICATE TASK PROTECTION
+                // --------------------------------------------
+                if (
+                    matchingTasks.length >
+                    1
+                ) {
+                    throw new Error(
+                        "Multiple matching tasks found. Add clientEmail to identify the correct task."
+                    );
+                }
+
+                const task =
+                    matchingTasks[0];
+
+                // --------------------------------------------
+                // SECURITY
+                // --------------------------------------------
+                if (
+                    task.assignedTo?.role !==
+                    "SUPERVISOR"
+                ) {
+                    throw new Error(
+                        "Only Supervisor tasks can be reassigned"
+                    );
+                }
+
+                // --------------------------------------------
+                // COMPLETED TASK
+                // --------------------------------------------
+                if (
+                    task.status ===
+                    "COMPLETED"
+                ) {
+                    throw new Error(
+                        "Cannot reassign a completed task"
+                    );
+                }
+
+                // --------------------------------------------
+                // CANCELLED TASK
+                // --------------------------------------------
+                if (
+                    task.status ===
+                    "CANCELLED"
+                ) {
+                    throw new Error(
+                        "Cannot reassign a cancelled task"
+                    );
+                }
+
+                // --------------------------------------------
+                // ALREADY ASSIGNED
+                // --------------------------------------------
+                if (
+                    task.assignedToId ===
+                    assignedToId
+                ) {
+                    throw new Error(
+                        "Task is already assigned to this supervisor"
+                    );
+                }
+
+                // --------------------------------------------
+                // REASSIGN TASK
+                // --------------------------------------------
+                const updatedTask =
+                    await prisma.task.update({
+                        where: {
+                            id:
+                                task.id,
+                        },
+
+                        data: {
+                            assignedToId:
+                                assignedToId,
+                        },
+
+                        include: {
+                            assignedTo: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    email: true,
+                                    phone: true,
+                                    role: true,
+                                    status: true,
+                                },
+                            },
+
+                            assignedBy: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    email: true,
+                                    role: true,
+                                },
+                            },
+
+                            site: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    siteCode: true,
+                                    city: true,
+                                    state: true,
+                                },
+                            },
+
+                            campaign: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    status: true,
+                                },
+                            },
+                        },
+                    });
+
+                successfulTasks.push(
+                    updatedTask
+                );
+            } catch (error) {
+                failedTasks.push({
+                    row:
+                        excelRow,
+
+                    title:
+                        title ||
+                        null,
+
+                    error:
+                        error.message,
+                });
+            }
+        }
+
+        // ----------------------------------------------------
+        // RESPONSE
+        // ----------------------------------------------------
+        return res.status(201).json({
+            success: true,
+
+            message:
+                "Bulk task reassignment completed",
+
+            data: {
+                total:
+                    tasks.length,
+
+                successful:
+                    successfulTasks.length,
+
+                failed:
+                    failedTasks.length,
+
+                successfulTasks,
+
+                failedTasks,
+            },
+        });
+    } catch (error) {
+        console.error(
+            "Reassign bulk tasks error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+
+            message:
+                "Failed to reassign bulk tasks",
+
+            error:
+                error.message,
+        });
+    }
+};
 
 
 /*
@@ -1595,469 +1733,556 @@ const reassignBulkTasks =
  * CANCEL TASK
  * ============================================================
  */
-const cancelTask =
-    async (req, res) => {
-        try {
-            const { id } =
-                req.params;
+const cancelTask = async (
+    req,
+    res
+) => {
+    try {
+        const { id } =
+            req.params;
 
-            // ------------------------------------------------
-            // FIND TASK
-            // ------------------------------------------------
-            const task =
-                await prisma.task.findUnique({
-                    where: {
-                        id,
-                    },
+        const task =
+            await prisma.task.findUnique({
+                where: {
+                    id,
+                },
 
-                    include: {
-                        assignedTo: {
-                            select: {
-                                id: true,
-                                name: true,
-                                email: true,
-                                role: true,
-                                status: true,
-                            },
-                        },
-
-                        assignedBy: {
-                            select: {
-                                id: true,
-                                name: true,
-                                email: true,
-                                role: true,
-                            },
-                        },
-
-                        site: {
-                            select: {
-                                id: true,
-                                name: true,
-                                siteCode: true,
-                            },
+                include: {
+                    assignedTo: {
+                        select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            role: true,
+                            status: true,
                         },
                     },
-                });
 
-            if (!task) {
-                return res.status(404).json({
-                    success: false,
-                    message:
-                        "Task not found",
-                });
-            }
-
-            // ------------------------------------------------
-            // ONLY SUPERVISOR TASKS
-            // ------------------------------------------------
-            if (
-                task.assignedTo?.role !==
-                "SUPERVISOR"
-            ) {
-                return res.status(404).json({
-                    success: false,
-                    message:
-                        "Task not found",
-                });
-            }
-
-            // ------------------------------------------------
-            // SUPERVISOR ACCESS
-            // ------------------------------------------------
-            if (
-                req.user.role ===
-                "SUPERVISOR"
-            ) {
-                if (
-                    task.assignedToId !==
-                    req.user.userId
-                ) {
-                    return res.status(403).json({
-                        success: false,
-                        message:
-                            "You do not have access to this task",
-                    });
-                }
-            }
-
-            // ------------------------------------------------
-            // COMPLETED TASK
-            // ------------------------------------------------
-            if (
-                task.status ===
-                "COMPLETED"
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Cannot cancel a completed task",
-                });
-            }
-
-            // ------------------------------------------------
-            // ALREADY CANCELLED
-            // ------------------------------------------------
-            if (
-                task.status ===
-                "CANCELLED"
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Task is already cancelled",
-                });
-            }
-
-            // ------------------------------------------------
-            // CANCEL
-            // ------------------------------------------------
-            const updatedTask =
-                await prisma.task.update({
-                    where: {
-                        id,
-                    },
-
-                    data: {
-                        status:
-                            "CANCELLED",
-                    },
-
-                    include: {
-                        assignedTo: {
-                            select: {
-                                id: true,
-                                name: true,
-                                email: true,
-                                role: true,
-                            },
-                        },
-
-                        assignedBy: {
-                            select: {
-                                id: true,
-                                name: true,
-                                email: true,
-                                role: true,
-                            },
-                        },
-
-                        site: {
-                            select: {
-                                id: true,
-                                name: true,
-                                siteCode: true,
-                            },
+                    assignedBy: {
+                        select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            role: true,
                         },
                     },
-                });
 
-            // ------------------------------------------------
-            // RESPONSE
-            // ------------------------------------------------
-            return res.status(200).json({
-                success: true,
+                    site: {
+                        select: {
+                            id: true,
+                            name: true,
+                            siteCode: true,
+                        },
+                    },
 
-                message:
-                    "Task cancelled successfully",
-
-                data: {
-                    task:
-                        updatedTask,
+                    campaign: {
+                        select: {
+                            id: true,
+                            name: true,
+                            status: true,
+                        },
+                    },
                 },
             });
-        } catch (error) {
-            console.error(
-                "Cancel task error:",
-                error
-            );
 
-            return res.status(500).json({
+        if (!task) {
+            return res.status(404).json({
                 success: false,
                 message:
-                    "Failed to cancel task",
+                    "Task not found",
             });
         }
-    };
+
+        if (
+            task.assignedTo?.role !==
+            "SUPERVISOR"
+        ) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Task not found",
+            });
+        }
+
+        if (
+            req.user.role ===
+            "SUPERVISOR"
+        ) {
+            if (
+                task.assignedToId !==
+                req.user.userId
+            ) {
+                return res.status(403).json({
+                    success: false,
+                    message:
+                        "You do not have access to this task",
+                });
+            }
+        }
+
+        if (
+            task.status ===
+            "COMPLETED"
+        ) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Cannot cancel a completed task",
+            });
+        }
+
+        if (
+            task.status ===
+            "CANCELLED"
+        ) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Task is already cancelled",
+            });
+        }
+
+        const updatedTask =
+            await prisma.task.update({
+                where: {
+                    id,
+                },
+
+                data: {
+                    status:
+                        "CANCELLED",
+                },
+
+                include: {
+                    assignedTo: {
+                        select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            role: true,
+                        },
+                    },
+
+                    assignedBy: {
+                        select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            role: true,
+                        },
+                    },
+
+                    site: {
+                        select: {
+                            id: true,
+                            name: true,
+                            siteCode: true,
+                        },
+                    },
+
+                    campaign: {
+                        select: {
+                            id: true,
+                            name: true,
+                            status: true,
+                        },
+                    },
+                },
+            });
+
+        return res.status(200).json({
+            success: true,
+
+            message:
+                "Task cancelled successfully",
+
+            data: {
+                task:
+                    updatedTask,
+            },
+        });
+    } catch (error) {
+        console.error(
+            "Cancel task error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to cancel task",
+        });
+    }
+};
 
 
 /*
  * ============================================================
  * CREATE BULK TASKS
  * ============================================================
+ *
+ * Excel should use:
+ *
+ * REQUIRED:
+ * - title
+ * - scheduledAt
+ * - supervisorEmail
+ * - siteName OR siteCode
+ *
+ * OPTIONAL:
+ * - description
+ * - clientEmail
+ * - priority
+ *
+ * UUIDs are resolved internally by the backend.
+ *
+ * campaignId is intentionally NOT supported here.
  */
-const createBulkTasks =
-    async (req, res) => {
-        try {
+const createBulkTasks = async (
+    req,
+    res
+) => {
+    try {
+        const {
+            tasks,
+        } = req.body;
+
+        // ----------------------------------------------------
+        // BASIC VALIDATION
+        // ----------------------------------------------------
+        if (
+            !Array.isArray(tasks) ||
+            tasks.length === 0
+        ) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "tasks must be a non-empty array",
+            });
+        }
+
+        if (tasks.length > 500) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Maximum 500 tasks can be created at once",
+            });
+        }
+
+        // ----------------------------------------------------
+        // SUPERVISOR CREATOR SITE
+        // ----------------------------------------------------
+        let supervisorSiteId = null;
+
+        if (
+            req.user.role ===
+            "SUPERVISOR"
+        ) {
+            const supervisor =
+                await prisma.user.findUnique({
+                    where: {
+                        id:
+                            req.user.userId,
+                    },
+
+                    select: {
+                        siteId: true,
+                    },
+                });
+
+            if (
+                !supervisor?.siteId
+            ) {
+                return res.status(403).json({
+                    success: false,
+                    message:
+                        "Supervisor is not assigned to a site",
+                });
+            }
+
+            supervisorSiteId =
+                supervisor.siteId;
+        }
+
+        // ----------------------------------------------------
+        // RESULT ARRAYS
+        // ----------------------------------------------------
+        const successfulTasks = [];
+        const failedTasks = [];
+
+        // ----------------------------------------------------
+        // PROCESS EACH TASK
+        // ----------------------------------------------------
+        for (
+            let index = 0;
+            index < tasks.length;
+            index++
+        ) {
+            const taskData =
+                tasks[index];
+
             const {
-                tasks,
-            } = req.body;
+                title,
+                description,
+                clientEmail,
+                priority,
+                scheduledAt,
+                assignedToId,
+                siteId,
+                supervisorEmail,
+                siteCode,
+                siteName,
+                showInAdvance = true,
+                showAfterMissed = true,
+                wholeDay = false,
+            } = taskData;
 
-            // ------------------------------------------------
-            // BASIC VALIDATION
-            // ------------------------------------------------
-            if (
-                !Array.isArray(tasks) ||
-                tasks.length === 0
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "tasks must be a non-empty array",
-                });
-            }
+            try {
+                // --------------------------------------------
+                // REQUIRED BASIC FIELDS
+                // --------------------------------------------
+                if (
+                    !title ||
+                    !scheduledAt
+                ) {
+                    throw new Error(
+                        "title and scheduledAt are required"
+                    );
+                }
 
-            if (tasks.length > 500) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Maximum 500 tasks can be created at once",
-                });
-            }
+                // --------------------------------------------
+                // CLIENT EMAIL
+                // --------------------------------------------
+                const normalizedClientEmail =
+                    typeof clientEmail ===
+                        "string" &&
+                        clientEmail.trim()
+                        ? clientEmail.trim()
+                        : null;
 
-            // ------------------------------------------------
-            // SUPERVISOR CREATOR SITE
-            // ------------------------------------------------
-            let supervisorSiteId =
-                null;
+                if (
+                    normalizedClientEmail
+                ) {
+                    const emailRegex =
+                        /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-            if (
-                req.user.role ===
-                "SUPERVISOR"
-            ) {
-                const supervisor =
+                    if (
+                        !emailRegex.test(
+                            normalizedClientEmail
+                        )
+                    ) {
+                        throw new Error(
+                            "Invalid client email"
+                        );
+                    }
+                }
+
+                // --------------------------------------------
+                // PRIORITY
+                // --------------------------------------------
+                const normalizedPriority =
+                    typeof priority ===
+                        "string" &&
+                        priority.trim()
+                        ? priority
+                            .trim()
+                            .toUpperCase()
+                        : "MEDIUM";
+
+                const validPriorities = [
+                    "LOW",
+                    "MEDIUM",
+                    "HIGH",
+                ];
+
+                if (
+                    !validPriorities.includes(
+                        normalizedPriority
+                    )
+                ) {
+                    throw new Error(
+                        "Invalid task priority"
+                    );
+                }
+
+                // --------------------------------------------
+                // DATE
+                // --------------------------------------------
+                const parsedScheduledAt =
+                    new Date(
+                        scheduledAt
+                    );
+
+                if (
+                    Number.isNaN(
+                        parsedScheduledAt.getTime()
+                    )
+                ) {
+                    throw new Error(
+                        "Invalid scheduled date"
+                    );
+                }
+
+                // --------------------------------------------
+                // RESOLVE SUPERVISOR UUID
+                // --------------------------------------------
+                let resolvedAssignedToId =
+                    typeof assignedToId ===
+                        "string" &&
+                        assignedToId.trim()
+                        ? assignedToId.trim()
+                        : null;
+
+                if (
+                    !resolvedAssignedToId
+                ) {
+                    const normalizedSupervisorEmail =
+                        typeof supervisorEmail ===
+                            "string"
+                            ? supervisorEmail
+                                .trim()
+                                .toLowerCase()
+                            : "";
+
+                    if (
+                        !normalizedSupervisorEmail
+                    ) {
+                        throw new Error(
+                            "Supervisor Email is required"
+                        );
+                    }
+
+                    const assignedUserByEmail =
+                        await prisma.user.findFirst({
+                            where: {
+                                email: {
+                                    equals:
+                                        normalizedSupervisorEmail,
+                                    mode:
+                                        "insensitive",
+                                },
+
+                                role:
+                                    "SUPERVISOR",
+
+                                status:
+                                    "ACTIVE",
+                            },
+
+                            select: {
+                                id: true,
+                            },
+                        });
+
+                    if (
+                        !assignedUserByEmail
+                    ) {
+                        throw new Error(
+                            `Active Supervisor not found for email: ${normalizedSupervisorEmail}`
+                        );
+                    }
+
+                    resolvedAssignedToId =
+                        assignedUserByEmail.id;
+                }
+
+                // --------------------------------------------
+                // VALIDATE ASSIGNED SUPERVISOR
+                // --------------------------------------------
+                const assignedUser =
                     await prisma.user.findUnique({
                         where: {
                             id:
-                                req.user.userId,
+                                resolvedAssignedToId,
                         },
 
                         select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            role: true,
+                            status: true,
                             siteId: true,
                         },
                     });
 
-                if (
-                    !supervisor?.siteId
-                ) {
-                    return res.status(403).json({
-                        success: false,
-                        message:
-                            "Supervisor is not assigned to a site",
-                    });
+                if (!assignedUser) {
+                    throw new Error(
+                        "Assigned Supervisor not found"
+                    );
                 }
 
-                supervisorSiteId =
-                    supervisor.siteId;
-            }
+                if (
+                    assignedUser.status !==
+                    "ACTIVE"
+                ) {
+                    throw new Error(
+                        "Assigned Supervisor is inactive"
+                    );
+                }
 
-            // ------------------------------------------------
-            // RESULT ARRAYS
-            // ------------------------------------------------
-            const successfulTasks = [];
-            const failedTasks = [];
+                if (
+                    assignedUser.role !==
+                    "SUPERVISOR"
+                ) {
+                    throw new Error(
+                        "Tasks can only be assigned to supervisors"
+                    );
+                }
 
-            // ------------------------------------------------
-            // PROCESS EACH TASK
-            // ------------------------------------------------
-            for (
-                let index = 0;
-                index < tasks.length;
-                index++
-            ) {
-                const taskData =
-                    tasks[index];
+                // --------------------------------------------
+                // RESOLVE SITE UUID
+                // --------------------------------------------
+                let resolvedSiteId =
+                    typeof siteId ===
+                        "string" &&
+                        siteId.trim()
+                        ? siteId.trim()
+                        : null;
 
-                const {
-                    title,
-                    description,
-                    clientEmail,
-                    priority,
-                    scheduledAt,
-                    assignedToId,
-                    siteId,
-                    campaignId,
-                    showInAdvance = true,
-                    showAfterMissed = true,
-                    wholeDay = false,
-                } = taskData;
+                if (
+                    !resolvedSiteId
+                ) {
+                    const normalizedSiteCode =
+                        typeof siteCode ===
+                            "string"
+                            ? siteCode.trim()
+                            : "";
 
-                try {
-                    // ----------------------------------------
-                    // REQUIRED FIELDS
-                    // ----------------------------------------
-                    if (
-                        !title ||
-                        !scheduledAt ||
-                        !assignedToId ||
-                        !siteId
-                    ) {
-                        throw new Error(
-                            "title, scheduledAt, assignedToId and siteId are required"
-                        );
-                    }
-
-                    // ----------------------------------------
-                    // CLIENT EMAIL
-                    // ----------------------------------------
-                    const normalizedClientEmail =
-                        typeof clientEmail === "string" &&
-                            clientEmail.trim()
-                            ? clientEmail.trim()
-                            : null;
-
-                    if (normalizedClientEmail) {
-                        const emailRegex =
-                            /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-                        if (
-                            !emailRegex.test(
-                                normalizedClientEmail
-                            )
-                        ) {
-                            throw new Error(
-                                "Invalid client email"
-                            );
-                        }
-                    }
-
-                    // ----------------------------------------
-                    // PRIORITY
-                    // ----------------------------------------
-                    const validPriorities = [
-                        "LOW",
-                        "MEDIUM",
-                        "HIGH",
-                    ];
+                    const normalizedSiteName =
+                        typeof siteName ===
+                            "string"
+                            ? siteName.trim()
+                            : "";
 
                     if (
-                        priority &&
-                        !validPriorities.includes(
-                            priority
-                        )
+                        !normalizedSiteCode &&
+                        !normalizedSiteName
                     ) {
                         throw new Error(
-                            "Invalid task priority"
+                            "Site Code or Site Name is required"
                         );
                     }
 
-                    // ----------------------------------------
-                    // DATE
-                    // ----------------------------------------
-                    const parsedScheduledAt =
-                        new Date(
-                            scheduledAt
-                        );
+                    let siteByReference =
+                        null;
 
+                    // First preference: Site Code
                     if (
-                        !scheduledAt ||
-                        Number.isNaN(
-                            parsedScheduledAt.getTime()
-                        )
+                        normalizedSiteCode
                     ) {
-                        throw new Error(
-                            "Invalid scheduled date"
-                        );
-                    }
-
-                    // ----------------------------------------
-                    // ASSIGNED SUPERVISOR
-                    // ----------------------------------------
-                    const assignedUser =
-                        await prisma.user.findUnique({
-                            where: {
-                                id:
-                                    assignedToId,
-                            },
-
-                            select: {
-                                id: true,
-                                role: true,
-                                status: true,
-                                siteId: true,
-                            },
-                        });
-
-                    if (!assignedUser) {
-                        throw new Error(
-                            "Assigned user not found"
-                        );
-                    }
-
-                    if (
-                        assignedUser.status !==
-                        "ACTIVE"
-                    ) {
-                        throw new Error(
-                            "Assigned user is inactive"
-                        );
-                    }
-
-                    if (
-                        assignedUser.role !==
-                        "SUPERVISOR"
-                    ) {
-                        throw new Error(
-                            "Tasks can only be assigned to supervisors"
-                        );
-                    }
-
-                    // ----------------------------------------
-                    // SITE
-                    // ----------------------------------------
-                    const site =
-                        await prisma.site.findUnique({
-                            where: {
-                                id: siteId,
-                            },
-
-                            select: {
-                                id: true,
-                                status: true,
-                            },
-                        });
-
-                    if (!site) {
-                        throw new Error(
-                            "Site not found"
-                        );
-                    }
-
-                    if (
-                        site.status !==
-                        "ACTIVE"
-                    ) {
-                        throw new Error(
-                            "Site is inactive"
-                        );
-                    }
-
-                    // ----------------------------------------
-                    // SUPERVISOR CREATOR SECURITY
-                    // ----------------------------------------
-                    if (
-                        req.user.role ===
-                        "SUPERVISOR"
-                    ) {
-                        if (
-                            siteId !==
-                            supervisorSiteId
-                        ) {
-                            throw new Error(
-                                "You can only create tasks for your assigned site"
-                            );
-                        }
-                    }
-
-                    // ----------------------------------------
-                    // CAMPAIGN
-                    // ----------------------------------------
-                    if (campaignId) {
-                        const campaign =
-                            await prisma.campaign.findUnique({
+                        siteByReference =
+                            await prisma.site.findFirst({
                                 where: {
-                                    id:
-                                        campaignId,
+                                    status:
+                                        "ACTIVE",
+
+                                    siteCode: {
+                                        equals:
+                                            normalizedSiteCode,
+                                        mode:
+                                            "insensitive",
+                                    },
                                 },
 
                                 select: {
@@ -2065,181 +2290,244 @@ const createBulkTasks =
                                     status: true,
                                 },
                             });
-
-                        if (!campaign) {
-                            throw new Error(
-                                "Campaign not found"
-                            );
-                        }
-
-                        if (
-                            campaign.status !==
-                            "ACTIVE"
-                        ) {
-                            throw new Error(
-                                "Campaign is not active"
-                            );
-                        }
                     }
 
-                    // ----------------------------------------
-                    // NORMALIZE FLAGS
-                    // ----------------------------------------
-                    const normalizedShowInAdvance =
-                        typeof showInAdvance ===
-                            "boolean"
-                            ? showInAdvance
-                            : true;
+                    // Fallback: Site Name
+                    if (
+                        !siteByReference &&
+                        normalizedSiteName
+                    ) {
+                        siteByReference =
+                            await prisma.site.findFirst({
+                                where: {
+                                    status:
+                                        "ACTIVE",
 
-                    const normalizedShowAfterMissed =
-                        typeof showAfterMissed ===
-                            "boolean"
-                            ? showAfterMissed
-                            : true;
-
-                    const normalizedWholeDay =
-                        typeof wholeDay ===
-                            "boolean"
-                            ? wholeDay
-                            : false;
-
-                    // ----------------------------------------
-                    // CREATE TASK
-                    // ----------------------------------------
-                    const task =
-                        await prisma.task.create({
-                            data: {
-                                title,
-
-                                description:
-                                    description ||
-                                    null,
-
-                                clientEmail:
-                                    normalizedClientEmail,
-
-                                priority:
-                                    priority ||
-                                    "MEDIUM",
-
-                                scheduledAt:
-                                    parsedScheduledAt,
-
-                                showInAdvance:
-                                    normalizedShowInAdvance,
-
-                                showAfterMissed:
-                                    normalizedShowAfterMissed,
-
-                                wholeDay:
-                                    normalizedWholeDay,
-
-                                assignedToId,
-
-                                assignedById:
-                                    req.user
-                                        .userId,
-
-                                siteId,
-
-                                campaignId:
-                                    campaignId ||
-                                    null,
-                            },
-
-                            include: {
-                                assignedTo: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        email: true,
-                                        role: true,
-                                        status: true,
+                                    name: {
+                                        equals:
+                                            normalizedSiteName,
+                                        mode:
+                                            "insensitive",
                                     },
                                 },
 
-                                assignedBy: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        email: true,
-                                        role: true,
-                                    },
+                                select: {
+                                    id: true,
+                                    status: true,
                                 },
+                            });
+                    }
 
-                                site: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        siteCode: true,
-                                    },
-                                },
+                    if (
+                        !siteByReference
+                    ) {
+                        throw new Error(
+                            `Active site not found for Site Code/Site Name: ${normalizedSiteCode || normalizedSiteName}`
+                        );
+                    }
 
-                                campaign: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        status: true,
-                                    },
-                                },
-                            },
-                        });
-
-                    successfulTasks.push(
-                        task
-                    );
-                } catch (error) {
-                    failedTasks.push({
-                        row:
-                            index + 1,
-
-                        title:
-                            title ||
-                            null,
-
-                        error:
-                            error.message,
-                    });
+                    resolvedSiteId =
+                        siteByReference.id;
                 }
+
+                // --------------------------------------------
+                // VALIDATE SITE
+                // --------------------------------------------
+                const site =
+                    await prisma.site.findUnique({
+                        where: {
+                            id:
+                                resolvedSiteId,
+                        },
+
+                        select: {
+                            id: true,
+                            status: true,
+                        },
+                    });
+
+                if (!site) {
+                    throw new Error(
+                        "Site not found"
+                    );
+                }
+
+                if (
+                    site.status !==
+                    "ACTIVE"
+                ) {
+                    throw new Error(
+                        "Site is inactive"
+                    );
+                }
+
+                // --------------------------------------------
+                // SUPERVISOR CREATOR SECURITY
+                // --------------------------------------------
+                if (
+                    req.user.role ===
+                    "SUPERVISOR"
+                ) {
+                    if (
+                        resolvedSiteId !==
+                        supervisorSiteId
+                    ) {
+                        throw new Error(
+                            "You can only create tasks for your assigned site"
+                        );
+                    }
+                }
+
+                // --------------------------------------------
+                // NORMALIZE FLAGS
+                // --------------------------------------------
+                const normalizedShowInAdvance =
+                    typeof showInAdvance ===
+                        "boolean"
+                        ? showInAdvance
+                        : true;
+
+                const normalizedShowAfterMissed =
+                    typeof showAfterMissed ===
+                        "boolean"
+                        ? showAfterMissed
+                        : true;
+
+                const normalizedWholeDay =
+                    typeof wholeDay ===
+                        "boolean"
+                        ? wholeDay
+                        : false;
+
+                // --------------------------------------------
+                // CREATE TASK
+                // --------------------------------------------
+                const task =
+                    await prisma.task.create({
+                        data: {
+                            title,
+
+                            description:
+                                description ||
+                                null,
+
+                            clientEmail:
+                                normalizedClientEmail,
+
+                            priority:
+                                normalizedPriority,
+
+                            scheduledAt:
+                                parsedScheduledAt,
+
+                            showInAdvance:
+                                normalizedShowInAdvance,
+
+                            showAfterMissed:
+                                normalizedShowAfterMissed,
+
+                            wholeDay:
+                                normalizedWholeDay,
+
+                            assignedToId:
+                                resolvedAssignedToId,
+
+                            assignedById:
+                                req.user
+                                    .userId,
+
+                            siteId:
+                                resolvedSiteId,
+                        },
+
+                        include: {
+                            assignedTo: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    email: true,
+                                    role: true,
+                                    status: true,
+                                },
+                            },
+
+                            assignedBy: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    email: true,
+                                    role: true,
+                                },
+                            },
+
+                            site: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    siteCode: true,
+                                    city: true,
+                                    state: true,
+                                },
+                            },
+                        },
+                    });
+
+                successfulTasks.push(
+                    task
+                );
+            } catch (error) {
+                failedTasks.push({
+                    row:
+                        index + 2,
+
+                    title:
+                        title ||
+                        null,
+
+                    error:
+                        error.message,
+                });
             }
-
-            // ------------------------------------------------
-            // FINAL RESPONSE
-            // ------------------------------------------------
-            return res.status(201).json({
-                success: true,
-
-                message:
-                    "Bulk task creation completed",
-
-                data: {
-                    total:
-                        tasks.length,
-
-                    successful:
-                        successfulTasks.length,
-
-                    failed:
-                        failedTasks.length,
-
-                    successfulTasks,
-
-                    failedTasks,
-                },
-            });
-        } catch (error) {
-            console.error(
-                "Create bulk tasks error:",
-                error
-            );
-
-            return res.status(500).json({
-                success: false,
-                message:
-                    "Failed to create bulk tasks",
-            });
         }
-    };
+
+        return res.status(201).json({
+            success: true,
+
+            message:
+                "Bulk task creation completed",
+
+            data: {
+                total:
+                    tasks.length,
+
+                successful:
+                    successfulTasks.length,
+
+                failed:
+                    failedTasks.length,
+
+                successfulTasks,
+
+                failedTasks,
+            },
+        });
+    } catch (error) {
+        console.error(
+            "Create bulk tasks error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+
+            message:
+                "Failed to create bulk tasks",
+
+            error:
+                error.message,
+        });
+    }
+};
 
 
 /*
@@ -2247,253 +2535,366 @@ const createBulkTasks =
  * CANCEL BULK TASKS
  * ============================================================
  */
-const cancelBulkTasks =
-    async (req, res) => {
-        try {
-            const {
-                tasks,
-            } = req.body;
+const cancelBulkTasks = async (req, res) => {
+    try {
+        const { tasks } = req.body;
 
-            // ------------------------------------------------
-            // BASIC VALIDATION
-            // ------------------------------------------------
-            if (
-                !Array.isArray(tasks) ||
-                tasks.length === 0
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "tasks must be a non-empty array",
-                });
-            }
-
-            if (tasks.length > 500) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Maximum 500 tasks can be cancelled at once",
-                });
-            }
-
-            // ------------------------------------------------
-            // RESULT ARRAYS
-            // ------------------------------------------------
-            const successfulTasks = [];
-            const failedTasks = [];
-
-            // ------------------------------------------------
-            // PROCESS EACH TASK
-            // ------------------------------------------------
-            for (
-                let index = 0;
-                index < tasks.length;
-                index++
-            ) {
-                const item =
-                    tasks[index];
-
-                const taskId =
-                    typeof item === "string"
-                        ? item.trim()
-                        : String(
-                            item?.taskId ??
-                            ""
-                        ).trim();
-
-                try {
-                    // TASK ID
-                    if (!taskId) {
-                        throw new Error(
-                            "Task ID is required"
-                        );
-                    }
-
-                    // FIND TASK
-                    const task =
-                        await prisma.task.findUnique({
-                            where: {
-                                id:
-                                    taskId,
-                            },
-
-                            include: {
-                                assignedTo: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        email: true,
-                                        role: true,
-                                    },
-                                },
-
-                                site: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        siteCode: true,
-                                    },
-                                },
-                            },
-                        });
-
-                    if (!task) {
-                        throw new Error(
-                            "Task not found"
-                        );
-                    }
-
-                    // SUPERVISOR TASK ONLY
-                    if (
-                        task.assignedTo?.role !==
-                        "SUPERVISOR"
-                    ) {
-                        throw new Error(
-                            "Only Supervisor tasks can be cancelled"
-                        );
-                    }
-
-                    // SUPERVISOR ACCESS
-                    if (
-                        req.user.role ===
-                        "SUPERVISOR"
-                    ) {
-                        if (
-                            task.assignedToId !==
-                            req.user.userId
-                        ) {
-                            throw new Error(
-                                "You do not have access to this task"
-                            );
-                        }
-                    }
-
-                    // COMPLETED
-                    if (
-                        task.status ===
-                        "COMPLETED"
-                    ) {
-                        throw new Error(
-                            "Cannot cancel a completed task"
-                        );
-                    }
-
-                    // ALREADY CANCELLED
-                    if (
-                        task.status ===
-                        "CANCELLED"
-                    ) {
-                        throw new Error(
-                            "Task is already cancelled"
-                        );
-                    }
-
-                    // CANCEL
-                    const updatedTask =
-                        await prisma.task.update({
-                            where: {
-                                id:
-                                    task.id,
-                            },
-
-                            data: {
-                                status:
-                                    "CANCELLED",
-                            },
-
-                            include: {
-                                assignedTo: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        email: true,
-                                        role: true,
-                                    },
-                                },
-
-                                assignedBy: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        email: true,
-                                        role: true,
-                                    },
-                                },
-
-                                site: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        siteCode: true,
-                                    },
-                                },
-
-                                campaign: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        status: true,
-                                    },
-                                },
-                            },
-                        });
-
-                    successfulTasks.push(
-                        updatedTask
-                    );
-                } catch (error) {
-                    failedTasks.push({
-                        row:
-                            index + 1,
-
-                        taskId:
-                            taskId ||
-                            null,
-
-                        error:
-                            error.message,
-                    });
-                }
-            }
-
-            // ------------------------------------------------
-            // RESPONSE
-            // ------------------------------------------------
-            return res.status(201).json({
-                success: true,
-
-                message:
-                    "Bulk task cancellation completed",
-
-                data: {
-                    total:
-                        tasks.length,
-
-                    successful:
-                        successfulTasks.length,
-
-                    failed:
-                        failedTasks.length,
-
-                    successfulTasks,
-
-                    failedTasks,
-                },
-            });
-        } catch (error) {
-            console.error(
-                "Cancel bulk tasks error:",
-                error
-            );
-
-            return res.status(500).json({
+        if (
+            !Array.isArray(tasks) ||
+            tasks.length === 0
+        ) {
+            return res.status(400).json({
                 success: false,
                 message:
-                    "Failed to cancel bulk tasks",
+                    "tasks must be a non-empty array",
             });
         }
-    };
 
+        if (tasks.length > 500) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Maximum 500 tasks can be cancelled at once",
+            });
+        }
+
+        const successfulTasks = [];
+        const failedTasks = [];
+
+        for (
+            let index = 0;
+            index < tasks.length;
+            index++
+        ) {
+            const item = tasks[index];
+
+            const title =
+                typeof item?.title === "string"
+                    ? item.title.trim()
+                    : "";
+
+            const supervisorEmail =
+                typeof item?.supervisorEmail ===
+                    "string"
+                    ? item.supervisorEmail
+                        .trim()
+                        .toLowerCase()
+                    : "";
+
+            const siteCode =
+                typeof item?.siteCode ===
+                    "string"
+                    ? item.siteCode.trim()
+                    : "";
+
+            const clientEmail =
+                typeof item?.clientEmail ===
+                    "string"
+                    ? item.clientEmail.trim()
+                    : "";
+
+            const scheduledAt =
+                item?.scheduledAt;
+
+            const excelRow =
+                Number(item?.row) ||
+                index + 2;
+
+            try {
+                if (
+                    !title ||
+                    !scheduledAt ||
+                    !supervisorEmail ||
+                    !siteCode
+                ) {
+                    throw new Error(
+                        "title, scheduledAt, supervisorEmail and siteCode are required"
+                    );
+                }
+
+                const parsedScheduledAt =
+                    new Date(scheduledAt);
+
+                if (
+                    Number.isNaN(
+                        parsedScheduledAt.getTime()
+                    )
+                ) {
+                    throw new Error(
+                        "Invalid scheduled date"
+                    );
+                }
+
+                // --------------------------------------------
+                // FIND ACTIVE SUPERVISOR
+                // --------------------------------------------
+                const supervisor =
+                    await prisma.user.findFirst({
+                        where: {
+                            email: {
+                                equals:
+                                    supervisorEmail,
+                                mode:
+                                    "insensitive",
+                            },
+
+                            role: "SUPERVISOR",
+
+                            status: "ACTIVE",
+                        },
+
+                        select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            role: true,
+                            status: true,
+                        },
+                    });
+
+                if (!supervisor) {
+                    throw new Error(
+                        `Active Supervisor not found for email: ${supervisorEmail}`
+                    );
+                }
+
+                // --------------------------------------------
+                // FIND ACTIVE SITE
+                // --------------------------------------------
+                const site =
+                    await prisma.site.findFirst({
+                        where: {
+                            status: "ACTIVE",
+
+                            siteCode: {
+                                equals: siteCode,
+                                mode:
+                                    "insensitive",
+                            },
+                        },
+
+                        select: {
+                            id: true,
+                            name: true,
+                            siteCode: true,
+                            status: true,
+                        },
+                    });
+
+                if (!site) {
+                    throw new Error(
+                        `Active site not found for Site Code: ${siteCode}`
+                    );
+                }
+
+                // --------------------------------------------
+                // FIND EXACT TASK
+                // --------------------------------------------
+                const taskWhere = {
+                    title: {
+                        equals: title,
+                        mode: "insensitive",
+                    },
+
+                    scheduledAt:
+                        parsedScheduledAt,
+
+                    assignedToId:
+                        supervisor.id,
+
+                    siteId: site.id,
+                };
+
+                if (clientEmail) {
+                    taskWhere.clientEmail =
+                        clientEmail;
+                }
+
+                const matchingTasks =
+                    await prisma.task.findMany({
+                        where: taskWhere,
+
+                        include: {
+                            assignedTo: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    email: true,
+                                    role: true,
+                                    status: true,
+                                },
+                            },
+
+                            assignedBy: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    email: true,
+                                    role: true,
+                                },
+                            },
+
+                            site: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    siteCode: true,
+                                },
+                            },
+
+                            campaign: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    status: true,
+                                },
+                            },
+                        },
+                    });
+
+                if (
+                    matchingTasks.length === 0
+                ) {
+                    throw new Error(
+                        "Task not found for the provided title, scheduledAt, supervisorEmail and siteCode"
+                    );
+                }
+
+                if (
+                    matchingTasks.length > 1
+                ) {
+                    throw new Error(
+                        "Multiple matching tasks found. Add clientEmail to identify the correct task."
+                    );
+                }
+
+                const task =
+                    matchingTasks[0];
+
+                if (
+                    task.assignedTo?.role !==
+                    "SUPERVISOR"
+                ) {
+                    throw new Error(
+                        "Only Supervisor tasks can be cancelled"
+                    );
+                }
+
+                if (
+                    task.status ===
+                    "COMPLETED"
+                ) {
+                    throw new Error(
+                        "Cannot cancel a completed task"
+                    );
+                }
+
+                if (
+                    task.status ===
+                    "CANCELLED"
+                ) {
+                    throw new Error(
+                        "Task is already cancelled"
+                    );
+                }
+
+                const updatedTask =
+                    await prisma.task.update({
+                        where: {
+                            id: task.id,
+                        },
+
+                        data: {
+                            status:
+                                "CANCELLED",
+                        },
+
+                        include: {
+                            assignedTo: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    email: true,
+                                    role: true,
+                                    status: true,
+                                },
+                            },
+
+                            assignedBy: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    email: true,
+                                    role: true,
+                                },
+                            },
+
+                            site: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    siteCode: true,
+                                },
+                            },
+
+                            campaign: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    status: true,
+                                },
+                            },
+                        },
+                    });
+
+                successfulTasks.push(
+                    updatedTask
+                );
+            } catch (error) {
+                failedTasks.push({
+                    row: excelRow,
+                    title: title || null,
+                    error: error.message,
+                });
+            }
+        }
+
+        return res.status(201).json({
+            success: true,
+
+            message:
+                "Bulk task cancellation completed",
+
+            data: {
+                total:
+                    tasks.length,
+
+                successful:
+                    successfulTasks.length,
+
+                failed:
+                    failedTasks.length,
+
+                successfulTasks,
+
+                failedTasks,
+            },
+        });
+    } catch (error) {
+        console.error(
+            "Cancel bulk tasks error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to cancel bulk tasks",
+            error:
+                error?.message,
+        });
+    }
+};
 
 /*
  * ============================================================

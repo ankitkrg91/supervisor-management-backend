@@ -37,9 +37,13 @@ const formatDate = (value) => {
         return "-";
     }
 
-    return new Date(value).toLocaleDateString(
-        "en-IN"
-    );
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+        return "-";
+    }
+
+    return date.toLocaleDateString("en-IN");
 };
 
 const formatTime = (value) => {
@@ -47,7 +51,13 @@ const formatTime = (value) => {
         return "-";
     }
 
-    return new Date(value).toLocaleTimeString(
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+        return "-";
+    }
+
+    return date.toLocaleTimeString(
         "en-IN",
         {
             hour: "2-digit",
@@ -64,14 +74,15 @@ const extractDescriptionValue = (
         return "";
     }
 
-    const lines = description.split("\n");
+    const lines =
+        String(description).split("\n");
 
     const line = lines.find((item) =>
         item
             .trim()
             .toLowerCase()
             .startsWith(
-                `${label.toLowerCase()}:`
+                `${String(label).toLowerCase()}:`
             )
     );
 
@@ -86,48 +97,98 @@ const extractDescriptionValue = (
         .trim();
 };
 
-const getTaskType = (task) => {
-    return (
-        extractDescriptionValue(
-            task.description,
-            "Type"
-        ) ||
-        task.title ||
-        "Task"
-    );
-};
+/* =========================================================
+   TASK HELPERS
+========================================================= */
 
 const getTaskClient = (task) => {
     return (
         extractDescriptionValue(
-            task.description,
+            task?.description,
             "Client"
         ) || "-"
     );
 };
 
+/*
+ * IMPORTANT:
+ *
+ * Priority:
+ * 1. Task.clientEmail
+ * 2. Client Email saved inside description
+ *
+ * NEVER use:
+ * task.assignedTo.email
+ *
+ * because that is Supervisor email.
+ */
+const getTaskClientEmail = (task) => {
+    const databaseEmail =
+        typeof task?.clientEmail === "string"
+            ? task.clientEmail.trim()
+            : "";
+
+    if (databaseEmail) {
+        return databaseEmail;
+    }
+
+    const descriptionEmail =
+        extractDescriptionValue(
+            task?.description,
+            "Client Email"
+        );
+
+    return descriptionEmail.trim() || "-";
+};
+
+const getTaskType = (task) => {
+    return (
+        extractDescriptionValue(
+            task?.description,
+            "Type"
+        ) ||
+        task?.title ||
+        "Task"
+    );
+};
+
 const getTaskStatus = (task) => {
     if (
-        task.status === "SCHEDULED" &&
-        new Date(task.scheduledAt) < new Date()
+        task?.status === "SCHEDULED" &&
+        task?.scheduledAt &&
+        new Date(task.scheduledAt) <
+        new Date()
     ) {
         return "Missed";
     }
 
-    if (task.status === "IN_PROGRESS") {
+    if (
+        task?.status ===
+        "IN_PROGRESS"
+    ) {
         return "In Progress";
     }
 
-    if (task.status === "COMPLETED") {
+    if (
+        task?.status ===
+        "COMPLETED"
+    ) {
         return "Completed";
     }
 
-    if (task.status === "CANCELLED") {
+    if (
+        task?.status ===
+        "CANCELLED"
+    ) {
         return "Cancelled";
     }
 
     return "Pending";
 };
+
+/* =========================================================
+   SITE HELPERS
+========================================================= */
 
 const getRegion = (site) => {
     return site?.state || "-";
@@ -137,10 +198,15 @@ const getBranch = (site) => {
     return site?.city || "-";
 };
 
-const normalizeSearch = (value) =>
-    typeof value === "string"
+/* =========================================================
+   SEARCH
+========================================================= */
+
+const normalizeSearch = (value) => {
+    return typeof value === "string"
         ? value.trim().toLowerCase()
         : "";
+};
 
 const matchesSearch = (
     row,
@@ -151,18 +217,23 @@ const matchesSearch = (
     }
 
     return [
-        row.date,
-        row.user,
-        row.client,
-        row.site,
-        row.type,
-        row.status,
-        row.distance,
+        row?.date,
+        row?.user,
+        row?.client,
+        row?.clientEmail,
+        row?.site,
+        row?.type,
+        row?.status,
+        row?.distance,
     ]
         .join(" ")
         .toLowerCase()
         .includes(search);
 };
+
+/* =========================================================
+   COMMON FILTERS
+========================================================= */
 
 const matchesCommonFilters = (
     row,
@@ -178,16 +249,18 @@ const matchesCommonFilters = (
 ) => {
     if (
         fromDate &&
-        row.rawDate &&
-        new Date(row.rawDate) < fromDate
+        row?.rawDate &&
+        new Date(row.rawDate) <
+        fromDate
     ) {
         return false;
     }
 
     if (
         toDate &&
-        row.rawDate &&
-        new Date(row.rawDate) > toDate
+        row?.rawDate &&
+        new Date(row.rawDate) >
+        toDate
     ) {
         return false;
     }
@@ -195,7 +268,7 @@ const matchesCommonFilters = (
     if (
         region &&
         region !== "All Regions" &&
-        row.region !== region
+        row?.region !== region
     ) {
         return false;
     }
@@ -203,7 +276,7 @@ const matchesCommonFilters = (
     if (
         branch &&
         branch !== "All Branches" &&
-        row.branch !== branch
+        row?.branch !== branch
     ) {
         return false;
     }
@@ -211,7 +284,7 @@ const matchesCommonFilters = (
     if (
         client &&
         client !== "All Clients" &&
-        row.client !== client
+        row?.client !== client
     ) {
         return false;
     }
@@ -219,7 +292,7 @@ const matchesCommonFilters = (
     if (
         user &&
         user !== "All Users" &&
-        row.user !== user
+        row?.user !== user
     ) {
         return false;
     }
@@ -237,7 +310,30 @@ const matchesCommonFilters = (
 const buildTaskReport = async () => {
     const tasks =
         await prisma.task.findMany({
-            include: {
+            /*
+             * IMPORTANT:
+             *
+             * clientEmail is explicitly selected
+             * from Task table.
+             *
+             * No Supervisor email is selected
+             * for the report email field.
+             */
+            select: {
+                id: true,
+
+                title: true,
+
+                description: true,
+
+                clientEmail: true,
+
+                status: true,
+
+                scheduledAt: true,
+
+                assignedToId: true,
+
                 assignedTo: {
                     select: {
                         id: true,
@@ -261,128 +357,71 @@ const buildTaskReport = async () => {
             },
         });
 
-    return tasks.map((task) => ({
-        id: task.id,
+    return tasks.map(
+        (task) => ({
+            id: task.id,
 
-        rawDate: task.scheduledAt,
+            rawDate:
+                task.scheduledAt,
 
-        date: formatDate(
-            task.scheduledAt
-        ),
+            date:
+                formatDate(
+                    task.scheduledAt
+                ),
 
-        user:
-            task.assignedTo?.name ||
-            "-",
+            user:
+                task.assignedTo?.name ||
+                "-",
 
-        client:
-            getTaskClient(task),
+            client:
+                getTaskClient(task),
 
-        site:
-            task.site?.name ||
-            "-",
+            /*
+             * THIS MUST BE CLIENT EMAIL.
+             */
+            clientEmail:
+                getTaskClientEmail(
+                    task
+                ),
 
-        type:
-            getTaskType(task),
+            site:
+                task.site?.name ||
+                "-",
 
-        status:
-            getTaskStatus(task),
+            type:
+                getTaskType(task),
 
-        checkIn: "-",
+            status:
+                getTaskStatus(task),
 
-        checkOut: "-",
+            checkIn: "-",
 
-        distance: "0.00",
+            checkOut: "-",
 
-        region:
-            getRegion(task.site),
+            distance: "0.00",
 
-        branch:
-            getBranch(task.site),
-    }));
+            region:
+                getRegion(
+                    task.site
+                ),
+
+            branch:
+                getBranch(
+                    task.site
+                ),
+        })
+    );
 };
 
 /* =========================================================
    VISIT REPORT
 ========================================================= */
 
-const buildVisitReport = async () => {
-    const visits =
-        await prisma.visit.findMany({
-            include: {
-                user: {
-                    select: {
-                        id: true,
-                        name: true,
-                        phone: true,
-                    },
-                },
-
-                site: {
-                    select: {
-                        id: true,
-                        name: true,
-                        city: true,
-                        state: true,
-                    },
-                },
-            },
-
-            orderBy: {
-                visitAt: "desc",
-            },
-        });
-
-    return visits.map((visit) => ({
-        id: visit.id,
-
-        rawDate: visit.visitAt,
-
-        date: formatDate(
-            visit.visitAt
-        ),
-
-        user:
-            visit.user?.name ||
-            "-",
-
-        client:
-            visit.clientName ||
-            "-",
-
-        site:
-            visit.site?.name ||
-            "-",
-
-        type:
-            visit.reportType ||
-            "Visit",
-
-        status:
-            visit.status,
-
-        checkIn: "-",
-
-        checkOut: "-",
-
-        distance: "0.00",
-
-        region:
-            getRegion(visit.site),
-
-        branch:
-            getBranch(visit.site),
-    }));
-};
-
-/* =========================================================
-   AUDIT REPORT
-========================================================= */
-
-const buildAuditReport = async () => {
-    const submissions =
-        await prisma.auditSubmission.findMany({
-            include: {
-                visit: {
+const buildVisitReport =
+    async () => {
+        const visits =
+            await prisma.visit.findMany(
+                {
                     include: {
                         user: {
                             select: {
@@ -401,83 +440,176 @@ const buildAuditReport = async () => {
                             },
                         },
                     },
-                },
 
-                template: {
-                    select: {
-                        id: true,
-                        name: true,
+                    orderBy: {
+                        visitAt:
+                            "desc",
                     },
-                },
-            },
+                }
+            );
 
-            orderBy: {
-                submittedAt: "desc",
-            },
-        });
-
-    return submissions.map(
-        (submission) => {
-            const visit =
-                submission.visit;
-
-            return {
-                id:
-                    submission.id,
-
-                // Added for Audit Details drill-down
-                visitId:
-                    visit?.id || null,
+        return visits.map(
+            (visit) => ({
+                id: visit.id,
 
                 rawDate:
-                    submission.submittedAt,
+                    visit.visitAt,
 
                 date:
                     formatDate(
-                        submission.submittedAt
+                        visit.visitAt
                     ),
 
                 user:
-                    visit?.user?.name ||
+                    visit.user?.name ||
                     "-",
 
                 client:
-                    visit?.clientName ||
+                    visit.clientName ||
                     "-",
 
                 site:
-                    visit?.site?.name ||
+                    visit.site?.name ||
                     "-",
 
                 type:
-                    submission
-                        ?.template
-                        ?.name ||
-                    "Audit",
+                    visit.reportType ||
+                    "Visit",
 
                 status:
-                    visit?.status ||
-                    "PENDING",
+                    visit.status,
 
                 checkIn: "-",
 
                 checkOut: "-",
 
-                distance: "0.00",
+                distance:
+                    "0.00",
 
                 region:
                     getRegion(
-                        visit?.site
+                        visit.site
                     ),
 
                 branch:
                     getBranch(
-                        visit?.site
+                        visit.site
                     ),
-            };
-        }
-    );
-};
+            })
+        );
+    };
+
+/* =========================================================
+   AUDIT REPORT
+========================================================= */
+
+const buildAuditReport =
+    async () => {
+        const submissions =
+            await prisma.auditSubmission.findMany(
+                {
+                    include: {
+                        visit: {
+                            include: {
+                                user: {
+                                    select: {
+                                        id: true,
+                                        name: true,
+                                        phone: true,
+                                    },
+                                },
+
+                                site: {
+                                    select: {
+                                        id: true,
+                                        name: true,
+                                        city: true,
+                                        state: true,
+                                    },
+                                },
+                            },
+                        },
+
+                        template: {
+                            select: {
+                                id: true,
+                                name: true,
+                            },
+                        },
+                    },
+
+                    orderBy: {
+                        submittedAt:
+                            "desc",
+                    },
+                }
+            );
+
+        return submissions.map(
+            (submission) => {
+                const visit =
+                    submission.visit;
+
+                return {
+                    id:
+                        submission.id,
+
+                    visitId:
+                        visit?.id ||
+                        null,
+
+                    rawDate:
+                        submission.submittedAt,
+
+                    date:
+                        formatDate(
+                            submission.submittedAt
+                        ),
+
+                    user:
+                        visit?.user?.name ||
+                        "-",
+
+                    client:
+                        visit?.clientName ||
+                        "-",
+
+                    site:
+                        visit?.site?.name ||
+                        "-",
+
+                    type:
+                        submission
+                            ?.template
+                            ?.name ||
+                        "Audit",
+
+                    status:
+                        visit?.status ||
+                        "PENDING",
+
+                    checkIn:
+                        "-",
+
+                    checkOut:
+                        "-",
+
+                    distance:
+                        "0.00",
+
+                    region:
+                        getRegion(
+                            visit?.site
+                        ),
+
+                    branch:
+                        getBranch(
+                            visit?.site
+                        ),
+                };
+            }
+        );
+    };
 
 /* =========================================================
    CHECK-IN / CHECK-OUT REPORT
@@ -508,14 +640,16 @@ const buildCheckInReport =
                     },
 
                     orderBy: {
-                        checkInAt: "desc",
+                        checkInAt:
+                            "desc",
                     },
                 }
             );
 
         return checkIns.map(
             (checkIn) => ({
-                id: checkIn.id,
+                id:
+                    checkIn.id,
 
                 rawDate:
                     checkIn.checkInAt,
@@ -529,7 +663,8 @@ const buildCheckInReport =
                     checkIn.user?.name ||
                     "-",
 
-                client: "-",
+                client:
+                    "-",
 
                 site:
                     checkIn.site?.name ||
@@ -577,43 +712,53 @@ const buildCheckInReport =
 const buildPerformanceReport =
     async () => {
         const supervisors =
-            await prisma.user.findMany({
-                where: {
-                    role: "SUPERVISOR",
-                },
-
-                select: {
-                    id: true,
-                    name: true,
-                    phone: true,
-
-                    site: {
-                        select: {
-                            id: true,
-                            name: true,
-                            city: true,
-                            state: true,
-                        },
+            await prisma.user.findMany(
+                {
+                    where: {
+                        role:
+                            "SUPERVISOR",
                     },
 
-                    assignedTasks: {
-                        select: {
-                            id: true,
-                            status: true,
-                            scheduledAt: true,
-                        },
-                    },
+                    select: {
+                        id: true,
 
-                    checkIns: {
-                        select: {
-                            checkInAt: true,
-                            checkOutAt: true,
-                            distanceTravelled:
-                                true,
+                        name: true,
+
+                        phone: true,
+
+                        site: {
+                            select: {
+                                id: true,
+                                name: true,
+                                city: true,
+                                state: true,
+                            },
+                        },
+
+                        assignedTasks: {
+                            select: {
+                                id: true,
+                                status: true,
+                                scheduledAt:
+                                    true,
+                            },
+                        },
+
+                        checkIns: {
+                            select: {
+                                checkInAt:
+                                    true,
+
+                                checkOutAt:
+                                    true,
+
+                                distanceTravelled:
+                                    true,
+                            },
                         },
                     },
-                },
-            });
+                }
+            );
 
         return supervisors.map(
             (supervisor) => {
@@ -662,7 +807,8 @@ const buildPerformanceReport =
 
                 const lastCheckIn =
                     sortedCheckIns[
-                    sortedCheckIns.length - 1
+                    sortedCheckIns.length -
+                    1
                     ];
 
                 const totalDistance =
@@ -750,7 +896,7 @@ const buildPerformanceReport =
     };
 
 /* =========================================================
-   DISTANCE REPORT
+   DISTANCE
 ========================================================= */
 
 const calculateDistanceKm = (
@@ -762,11 +908,10 @@ const calculateDistanceKm = (
     const earthRadiusKm =
         6371;
 
-    const toRadians = (
-        degrees
-    ) =>
-        (degrees * Math.PI) /
-        180;
+    const toRadians =
+        (degrees) =>
+            (degrees * Math.PI) /
+            180;
 
     const lat1 =
         toRadians(latitude1);
@@ -787,7 +932,9 @@ const calculateDistanceKm = (
         );
 
     const a =
-        Math.sin(deltaLat / 2) **
+        Math.sin(
+            deltaLat / 2
+        ) **
         2 +
         Math.cos(lat1) *
         Math.cos(lat2) *
@@ -808,18 +955,25 @@ const calculateDistanceKm = (
     );
 };
 
+/* =========================================================
+   DISTANCE REPORT
+========================================================= */
+
 const buildDistanceReport =
     async () => {
         const supervisors =
             await prisma.user.findMany(
                 {
                     where: {
-                        role: "SUPERVISOR",
+                        role:
+                            "SUPERVISOR",
                     },
 
                     select: {
                         id: true,
+
                         name: true,
+
                         phone: true,
 
                         site: {
@@ -836,7 +990,8 @@ const buildDistanceReport =
 
         const userIds =
             supervisors.map(
-                (user) => user.id
+                (user) =>
+                    user.id
             );
 
         const logs =
@@ -867,7 +1022,9 @@ const buildDistanceReport =
         const logsByUser =
             new Map();
 
-        for (const log of logs) {
+        for (
+            const log of logs
+        ) {
             if (
                 !logsByUser.has(
                     log.userId
@@ -895,17 +1052,23 @@ const buildDistanceReport =
 
                 for (
                     let index = 1;
-                    index < points.length;
+                    index <
+                    points.length;
                     index++
                 ) {
                     distance +=
                         calculateDistanceKm(
-                            points[index - 1]
-                                .latitude,
-                            points[index - 1]
-                                .longitude,
+                            points[
+                                index - 1
+                            ].latitude,
+
+                            points[
+                                index - 1
+                            ].longitude,
+
                             points[index]
                                 .latitude,
+
                             points[index]
                                 .longitude
                         );
@@ -932,23 +1095,29 @@ const buildDistanceReport =
                     user:
                         supervisor.name,
 
-                    client: "-",
+                    client:
+                        "-",
 
                     site:
                         supervisor
-                            .site?.name ||
+                            .site
+                            ?.name ||
                         "-",
 
-                    type: "Travel",
+                    type:
+                        "Travel",
 
                     status:
-                        points.length > 0
+                        points.length >
+                            0
                             ? "Tracked"
                             : "No GPS",
 
-                    checkIn: "-",
+                    checkIn:
+                        "-",
 
-                    checkOut: "-",
+                    checkOut:
+                        "-",
 
                     distance:
                         distance.toFixed(
@@ -980,14 +1149,23 @@ const getReport = async (
     try {
         const {
             type = "Task Report",
+
             fromDate,
+
             toDate,
+
             region = "",
+
             branch = "",
+
             client = "",
+
             user = "",
+
             search = "",
+
             page = 1,
+
             limit = 10,
         } = req.query;
 
@@ -1005,11 +1183,14 @@ const getReport = async (
                 type
             )
         ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Invalid report type",
-            });
+            return res.status(400).json(
+                {
+                    success: false,
+
+                    message:
+                        "Invalid report type",
+                }
+            );
         }
 
         const startDate =
@@ -1026,22 +1207,28 @@ const getReport = async (
             fromDate &&
             !startDate
         ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Invalid from date",
-            });
+            return res.status(400).json(
+                {
+                    success: false,
+
+                    message:
+                        "Invalid from date",
+                }
+            );
         }
 
         if (
             toDate &&
             !endDate
         ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Invalid to date",
-            });
+            return res.status(400).json(
+                {
+                    success: false,
+
+                    message:
+                        "Invalid to date",
+                }
+            );
         }
 
         if (
@@ -1049,11 +1236,14 @@ const getReport = async (
             endDate &&
             endDate < startDate
         ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "To date cannot be before from date",
-            });
+            return res.status(400).json(
+                {
+                    success: false,
+
+                    message:
+                        "To date cannot be before from date",
+                }
+            );
         }
 
         const currentPage =
@@ -1067,8 +1257,10 @@ const getReport = async (
                 Math.max(
                     Number(limit) ||
                     10,
+
                     1
                 ),
+
                 100
             );
 
@@ -1080,22 +1272,26 @@ const getReport = async (
                 endDate,
 
             region:
-                typeof region === "string"
+                typeof region ===
+                    "string"
                     ? region
                     : "",
 
             branch:
-                typeof branch === "string"
+                typeof branch ===
+                    "string"
                     ? branch
                     : "",
 
             client:
-                typeof client === "string"
+                typeof client ===
+                    "string"
                     ? client
                     : "",
 
             user:
-                typeof user === "string"
+                typeof user ===
+                    "string"
                     ? user
                     : "",
 
@@ -1108,43 +1304,36 @@ const getReport = async (
         let rows = [];
 
         if (
-            type === "Task Report"
+            type ===
+            "Task Report"
         ) {
             rows =
                 await buildTaskReport();
-        }
-
-        if (
-            type === "Visit Report"
+        } else if (
+            type ===
+            "Visit Report"
         ) {
             rows =
                 await buildVisitReport();
-        }
-
-        if (
-            type === "Audit Report"
+        } else if (
+            type ===
+            "Audit Report"
         ) {
             rows =
                 await buildAuditReport();
-        }
-
-        if (
+        } else if (
             type ===
             "Check-In / Check-Out Report"
         ) {
             rows =
                 await buildCheckInReport();
-        }
-
-        if (
+        } else if (
             type ===
             "Field Force Performance"
         ) {
             rows =
                 await buildPerformanceReport();
-        }
-
-        if (
+        } else if (
             type ===
             "Distance Report"
         ) {
@@ -1153,11 +1342,12 @@ const getReport = async (
         }
 
         const filteredRows =
-            rows.filter((row) =>
-                matchesCommonFilters(
-                    row,
-                    filters
-                )
+            rows.filter(
+                (row) =>
+                    matchesCommonFilters(
+                        row,
+                        filters
+                    )
             );
 
         const completedCount =
@@ -1171,10 +1361,11 @@ const getReport = async (
                     ].includes(
                         row.status
                     ) ||
-                    row.status
-                        ?.includes(
-                            "% Complete"
-                        )
+                    String(
+                        row.status || ""
+                    ).includes(
+                        "% Complete"
+                    )
             ).length;
 
         const pendingCount =
@@ -1198,7 +1389,10 @@ const getReport = async (
 
         const totalDistance =
             filteredRows.reduce(
-                (sum, row) =>
+                (
+                    sum,
+                    row
+                ) =>
                     sum +
                     Number(
                         row.distance ||
@@ -1246,7 +1440,8 @@ const getReport = async (
                         .filter(
                             (value) =>
                                 value &&
-                                value !== "-"
+                                value !==
+                                "-"
                         )
                 ),
             ].sort();
@@ -1270,7 +1465,8 @@ const getReport = async (
 
         const totalPages =
             Math.ceil(
-                total / perPage
+                total /
+                perPage
             );
 
         const safePage =
@@ -1288,75 +1484,125 @@ const getReport = async (
         const paginatedRows =
             filteredRows.slice(
                 startIndex,
+
                 startIndex +
                 perPage
             );
 
-        return res.status(200).json({
-            success: true,
+        /*
+         * IMPORTANT DEBUG:
+         *
+         * This confirms exactly what the
+         * API is sending to Admin Reports.
+         */
+        if (
+            type ===
+            "Task Report"
+        ) {
+            console.log(
+                "TASK REPORT RESPONSE:",
+                paginatedRows.map(
+                    (row) => ({
+                        id:
+                            row.id,
 
-            data: {
-                reportType: type,
+                        client:
+                            row.client,
 
-                rows:
-                    paginatedRows,
+                        clientEmail:
+                            row.clientEmail,
 
-                summary: {
-                    totalRecords:
+                        supervisor:
+                            row.user,
+                    })
+                )
+            );
+        }
+
+        return res.status(200).json(
+            {
+                success: true,
+
+                data: {
+                    reportType:
+                        type,
+
+                    rows:
+                        paginatedRows,
+
+                    summary: {
+                        totalRecords:
+                            total,
+
+                        completed:
+                            completedCount,
+
+                        pending:
+                            pendingCount,
+
+                        missed:
+                            missedCount,
+
+                        totalDistance:
+                            Number(
+                                totalDistance.toFixed(
+                                    2
+                                )
+                            ),
+                    },
+
+                    filters: {
+                        regions:
+                            uniqueRegions,
+
+                        branches:
+                            uniqueBranches,
+
+                        clients:
+                            uniqueClients,
+
+                        users:
+                            uniqueUsers,
+                    },
+
+                    pagination: {
+                        page:
+                            safePage,
+
+                        limit:
+                            perPage,
+
                         total,
 
-                    completed:
-                        completedCount,
-
-                    pending:
-                        pendingCount,
-
-                    missed:
-                        missedCount,
-
-                    totalDistance:
-                        Number(
-                            totalDistance.toFixed(
-                                2
-                            )
-                        ),
+                        totalPages,
+                    },
                 },
-
-                filters: {
-                    regions:
-                        uniqueRegions,
-
-                    branches:
-                        uniqueBranches,
-
-                    clients:
-                        uniqueClients,
-
-                    users:
-                        uniqueUsers,
-                },
-
-                pagination: {
-                    page: safePage,
-                    limit: perPage,
-                    total,
-                    totalPages,
-                },
-            },
-        });
+            }
+        );
     } catch (error) {
         console.error(
             "Get report error:",
             error
         );
 
-        return res.status(500).json({
-            success: false,
-            message:
-                "Failed to generate report",
-        });
+        return res.status(500).json(
+            {
+                success: false,
+
+                message:
+                    "Failed to generate report",
+
+                error:
+                    error?.message ||
+                    "Unknown error",
+            }
+        );
     }
 };
+
+/* =========================================================
+   EXPORT
+========================================================= */
 
 export {
     getReport,
