@@ -20,11 +20,7 @@ import {
     getAuditSubmission,
 } from "../controllers/auditController.js";
 
-import {
-    getSubmittedAudits,
-    getSubmittedAuditById,
-    updateAuditVerificationStatus,
-} from "../controllers/auditVerificationController.js";
+
 
 import authenticate from "../middleware/authMiddleware.js";
 
@@ -81,19 +77,7 @@ router.get(
 );
 
 
-/* =========================================================
-   ADMIN + SUPERVISOR
-   AUDIT REGISTER
 
-   ADMIN ONLY
-========================================================= */
-
-router.get(
-    "/submissions",
-    authenticate,
-    authorize("SUPER_ADMIN"),
-    getSubmittedAudits
-);
 
 
 /* =========================================================
@@ -109,34 +93,6 @@ router.get(
         "SUPERVISOR"
     ),
     getAuditTemplateById
-);
-
-
-/* =========================================================
-   ADMIN - AUDIT QUESTIONS
-========================================================= */
-
-router.post(
-    "/:templateId/questions",
-    authenticate,
-    authorize("SUPER_ADMIN"),
-    addAuditQuestion
-);
-
-
-router.put(
-    "/:templateId/questions/:questionId",
-    authenticate,
-    authorize("SUPER_ADMIN"),
-    updateAuditQuestion
-);
-
-
-router.delete(
-    "/:templateId/questions/:questionId",
-    authenticate,
-    authorize("SUPER_ADMIN"),
-    deleteAuditQuestion
 );
 
 
@@ -169,6 +125,36 @@ router.delete(
 
 
 /* =========================================================
+   ADMIN - AUDIT QUESTIONS
+========================================================= */
+
+router.post(
+    "/:templateId/questions",
+    authenticate,
+    authorize("SUPER_ADMIN"),
+    addAuditQuestion
+);
+
+
+router.put(
+    "/:templateId/questions/:questionId",
+    authenticate,
+    authorize("SUPER_ADMIN"),
+    updateAuditQuestion
+);
+
+
+router.delete(
+    "/:templateId/questions/:questionId",
+    authenticate,
+    authorize("SUPER_ADMIN"),
+    deleteAuditQuestion
+);
+
+
+
+
+/* =========================================================
    SUPERVISOR - SUBMIT AUDIT
 ========================================================= */
 
@@ -196,28 +182,7 @@ router.get(
 );
 
 
-/* =========================================================
-   ADMIN - GET SINGLE SUBMITTED AUDIT
-========================================================= */
 
-router.get(
-    "/submissions/:id",
-    authenticate,
-    authorize("SUPER_ADMIN"),
-    getSubmittedAuditById
-);
-
-
-/* =========================================================
-   ADMIN - VERIFY / REJECT AUDIT
-========================================================= */
-
-router.patch(
-    "/submissions/:id/status",
-    authenticate,
-    authorize("SUPER_ADMIN"),
-    updateAuditVerificationStatus
-);
 
 
 export default router;

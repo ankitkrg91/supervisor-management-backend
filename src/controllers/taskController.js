@@ -22,6 +22,8 @@ const createTask = async (req, res) => {
             title,
             description,
             clientEmail,
+            clientPhone,
+            clientMobile,
             priority,
             scheduledAt,
             assignedToId,
@@ -268,6 +270,19 @@ const createTask = async (req, res) => {
         }
 
         // ----------------------------------------------------
+        // APPEND CLIENT MOBILE TO DESCRIPTION IF PROVIDED
+        // ----------------------------------------------------
+        let finalDescription = description || "";
+        const mobileToSave = clientPhone || clientMobile;
+        if (mobileToSave && typeof mobileToSave === "string" && mobileToSave.trim()) {
+            if (!finalDescription.includes("Client Mobile:")) {
+                finalDescription = finalDescription
+                    ? `${finalDescription} | Client Mobile: ${mobileToSave.trim()}`
+                    : `Client Mobile: ${mobileToSave.trim()}`;
+            }
+        }
+
+        // ----------------------------------------------------
         // CREATE TASK
         // ----------------------------------------------------
         const task = await prisma.task.create({
@@ -275,7 +290,7 @@ const createTask = async (req, res) => {
                 title,
 
                 description:
-                    description || null,
+                    finalDescription || null,
 
                 clientEmail:
                     normalizedClientEmail,
@@ -622,11 +637,21 @@ const getTasks = async (req, res) => {
             }),
         ]);
 
+        const enrichedTasks = tasks.map((t) => {
+            const m = t.description && t.description.match(/Client Mobile:\s*([^\s|]+)/i);
+            const phone = m ? m[1].trim() : null;
+            return {
+                ...t,
+                clientMobile: phone,
+                clientPhone: phone,
+            };
+        });
+
         return res.status(200).json({
             success: true,
 
             data: {
-                tasks,
+                tasks: enrichedTasks,
 
                 pagination: {
                     page:
@@ -775,11 +800,19 @@ const getTaskById = async (
             });
         }
 
+        const m = task.description && task.description.match(/Client Mobile:\s*([^\s|]+)/i);
+        const phone = m ? m[1].trim() : null;
+        const enrichedTask = {
+            ...task,
+            clientMobile: phone,
+            clientPhone: phone,
+        };
+
         return res.status(200).json({
             success: true,
 
             data: {
-                task,
+                task: enrichedTask,
             },
         });
     } catch (error) {
@@ -2400,6 +2433,19 @@ const createBulkTasks = async (
                         : false;
 
                 // --------------------------------------------
+                // APPEND CLIENT MOBILE TO DESCRIPTION IF PROVIDED
+                // --------------------------------------------
+                let finalBulkDescription = description || "";
+                const bulkMobile = taskItem.clientPhone || taskItem.clientMobile;
+                if (bulkMobile && typeof bulkMobile === "string" && bulkMobile.trim()) {
+                    if (!finalBulkDescription.includes("Client Mobile:")) {
+                        finalBulkDescription = finalBulkDescription
+                            ? `${finalBulkDescription} | Client Mobile: ${bulkMobile.trim()}`
+                            : `Client Mobile: ${bulkMobile.trim()}`;
+                    }
+                }
+
+                // --------------------------------------------
                 // CREATE TASK
                 // --------------------------------------------
                 const task =
@@ -2408,7 +2454,7 @@ const createBulkTasks = async (
                             title,
 
                             description:
-                                description ||
+                                finalBulkDescription ||
                                 null,
 
                             clientEmail:

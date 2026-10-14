@@ -3,26 +3,49 @@ import { sendAuditCompletionEmail } from "../services/auditEmailService.js";
 
 /*
  * ============================================================
+ * HELPER: EXTRACT SUPERVISOR SELFIE FROM VISIT
+ * ============================================================
+ * Extracts the actual supervisor face selfie from [SITE_EVIDENCE]
+ * so that site entrance photos (photo1) are never mistaken for selfies.
+ */
+const extractSelfieFromVisit = (visit) => {
+    if (!visit) return null;
+
+    // Priority 1: Extract 'selfie' from [SITE_EVIDENCE] in notes
+    if (visit.notes && typeof visit.notes === "string") {
+        try {
+            const m = visit.notes.match(/\[SITE_EVIDENCE\]:\s*(\{[\s\S]*?\})/);
+            if (m) {
+                const ev = JSON.parse(m[1]);
+                if (ev.selfie && typeof ev.selfie === "string" && ev.selfie.trim().length > 0) {
+                    return ev.selfie.trim();
+                }
+            }
+        } catch (_) { }
+    }
+
+    // Priority 2: Extract from direct [CHECKIN_SELFIE] tag in notes
+    if (visit.notes && typeof visit.notes === "string") {
+        try {
+            const m = visit.notes.match(/\[CHECKIN_SELFIE\]:\s*(data:image\/[^\s\n]+|https?:\/\/[^\s\n]+)/);
+            if (m) {
+                return m[1].trim();
+            }
+        } catch (_) { }
+    }
+
+    // Priority 3: If visit was created as dedicated "Site Check-In", photoUrl is check-in selfie
+    if (visit.reportType === "Site Check-In" && visit.photoUrl) {
+        return visit.photoUrl.trim();
+    }
+
+    return null;
+};
+
+/*
+ * ============================================================
  * CREATE CHECK-IN
  * ============================================================
- *
- * RULES
- * ------------------------------------------------------------
- * 1. User.siteId = supervisor primary/default site only.
- * 2. Task.siteId = actual site of the current task.
- * 3. Supervisor can work at multiple sites through assigned tasks.
- * 4. Check-in permission is based on:
- *
- *      Task.assignedToId === current Supervisor
- *      Task.siteId        === requested site
- *
- * 5. We NEVER compare:
- *
- *      user.siteId === siteId
- *
- * 6. One Supervisor can have only one active check-in at a time.
- * 7. Same-site active check-in is reused.
- * 8. Different-site active check-in requires checkout first.
  */
 const createCheckIn = async (req, res) => {
     try {
@@ -32,6 +55,7 @@ const createCheckIn = async (req, res) => {
             siteId,
             latitude,
             longitude,
+            photoUrl,
         } = req.body;
 
         if (!siteId) {
@@ -41,15 +65,8 @@ const createCheckIn = async (req, res) => {
             });
         }
 
-        // --------------------------------------------------------
-        // CURRENT USER
-        // --------------------------------------------------------
-
         const user = await prisma.user.findUnique({
-            where: {
-                id: userId,
-            },
-
+            where: { id: userId },
             select: {
                 id: true,
                 name: true,
@@ -77,20 +94,12 @@ const createCheckIn = async (req, res) => {
         if (user.role !== "SUPERVISOR") {
             return res.status(403).json({
                 success: false,
-                message:
-                    "Only active Supervisors can check in",
+                message: "Only active Supervisors can check in",
             });
         }
 
-        // --------------------------------------------------------
-        // SITE
-        // --------------------------------------------------------
-
         const site = await prisma.site.findUnique({
-            where: {
-                id: siteId,
-            },
-
+            where: { id: siteId },
             select: {
                 id: true,
                 name: true,
@@ -98,6 +107,8 @@ const createCheckIn = async (req, res) => {
                 status: true,
                 city: true,
                 state: true,
+                latitude: true,
+                longitude: true,
             },
         });
 
@@ -115,33 +126,12 @@ const createCheckIn = async (req, res) => {
             });
         }
 
-        // --------------------------------------------------------
-        // VERIFY TASK ASSIGNMENT
-        // --------------------------------------------------------
-
-        /*
-         * IMPORTANT:
-         * NEVER compare user.siteId with siteId.
-         *
-         * Supervisor can have:
-         *
-         * Task 1 -> Site A
-         * Task 2 -> Site B
-         * Task 3 -> Site C
-         *
-         * The Supervisor is allowed to check in if the
-         * requested site belongs to one of their assigned tasks.
-         */
-
         const assignedTask = await prisma.task.findFirst({
             where: {
                 assignedToId: userId,
                 siteId: siteId,
-                status: {
-                    not: "CANCELLED",
-                },
+                status: { not: "CANCELLED" },
             },
-
             select: {
                 id: true,
                 title: true,
@@ -152,17 +142,13 @@ const createCheckIn = async (req, res) => {
                 siteId: true,
                 assignedToId: true,
             },
-
-            orderBy: {
-                scheduledAt: "asc",
-            },
+            orderBy: { scheduledAt: "asc" },
         });
 
         if (!assignedTask) {
             return res.status(403).json({
                 success: false,
-                message:
-                    "This task is not assigned to the logged-in Supervisor for this site.",
+                message: "This task is not assigned to the logged-in Supervisor for this site.",
                 data: {
                     userId: userId,
                     requestedSiteId: siteId,
@@ -170,31 +156,19 @@ const createCheckIn = async (req, res) => {
             });
         }
 
-        // --------------------------------------------------------
-        // LOCATION
-        // --------------------------------------------------------
-
         const parsedLatitude =
-            latitude !== undefined &&
-                latitude !== null &&
-                latitude !== ""
+            latitude !== undefined && latitude !== null && latitude !== ""
                 ? Number(latitude)
                 : null;
 
         const parsedLongitude =
-            longitude !== undefined &&
-                longitude !== null &&
-                longitude !== ""
+            longitude !== undefined && longitude !== null && longitude !== ""
                 ? Number(longitude)
                 : null;
 
         if (
             parsedLatitude !== null &&
-            (
-                Number.isNaN(parsedLatitude) ||
-                parsedLatitude < -90 ||
-                parsedLatitude > 90
-            )
+            (Number.isNaN(parsedLatitude) || parsedLatitude < -90 || parsedLatitude > 90)
         ) {
             return res.status(400).json({
                 success: false,
@@ -204,11 +178,7 @@ const createCheckIn = async (req, res) => {
 
         if (
             parsedLongitude !== null &&
-            (
-                Number.isNaN(parsedLongitude) ||
-                parsedLongitude < -180 ||
-                parsedLongitude > 180
-            )
+            (Number.isNaN(parsedLongitude) || parsedLongitude < -180 || parsedLongitude > 180)
         ) {
             return res.status(400).json({
                 success: false,
@@ -216,169 +186,224 @@ const createCheckIn = async (req, res) => {
             });
         }
 
-        // --------------------------------------------------------
-        // CHECK ACTIVE CHECK-IN AT THIS SITE ONLY
-        // --------------------------------------------------------
+        // 100-Meter Geofence check
+        const calculateDistanceMeters = (lat1, lon1, lat2, lon2) => {
+            const R = 6371e3;
+            const phi1 = (lat1 * Math.PI) / 180;
+            const phi2 = (lat2 * Math.PI) / 180;
+            const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
+            const deltaLambda = ((lon2 - lon1) * Math.PI) / 180;
+            const a =
+                Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+                Math.cos(phi1) * Math.cos(phi2) *
+                Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        };
 
-        /*
-         * IMPORTANT:
-         *
-         * DO NOT search only by userId.
-         *
-         * Multiple active check-ins at different sites are allowed.
-         *
-         * Example:
-         *
-         * Site A -> CHECKED_IN
-         * Site B -> CHECKED_IN
-         * Site C -> CHECKED_IN
-         */
+        if (
+            site.latitude !== null &&
+            site.latitude !== undefined &&
+            site.longitude !== null &&
+            site.longitude !== undefined &&
+            parsedLatitude !== null &&
+            parsedLongitude !== null
+        ) {
+            const distanceMeters = calculateDistanceMeters(
+                parsedLatitude,
+                parsedLongitude,
+                site.latitude,
+                site.longitude
+            );
 
-        const existingCheckIn =
-            await prisma.checkInOut.findFirst({
-                where: {
-                    userId: userId,
-                    siteId: siteId,
-                    status: "CHECKED_IN",
-                    checkOutAt: null,
-                },
-
-                include: {
-                    user: {
-                        select: {
-                            id: true,
-                            name: true,
-                            email: true,
-                            role: true,
-                        },
+            if (distanceMeters > 100) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Check-in is only allowed within 100 meters of the site. You are currently ${Math.round(distanceMeters)}m away from ${site.name}.`,
+                    data: {
+                        distanceMeters: Math.round(distanceMeters),
+                        allowedRadiusMeters: 100,
+                        siteName: site.name,
                     },
-
-                    site: {
-                        select: {
-                            id: true,
-                            name: true,
-                            siteCode: true,
-                            city: true,
-                            state: true,
-                        },
-                    },
-                },
-
-                orderBy: {
-                    checkInAt: "desc",
+                });
+            }
+        } else if (
+            (site.latitude === null || site.longitude === null) &&
+            parsedLatitude !== null &&
+            parsedLongitude !== null
+        ) {
+            await prisma.site.update({
+                where: { id: siteId },
+                data: {
+                    latitude: parsedLatitude,
+                    longitude: parsedLongitude,
                 },
             });
+        }
 
-        // --------------------------------------------------------
-        // ALREADY CHECKED IN AT THIS TASK SITE
-        // --------------------------------------------------------
+        const existingCheckIn = await prisma.checkInOut.findFirst({
+            where: {
+                userId: userId,
+                siteId: siteId,
+                status: "CHECKED_IN",
+                checkOutAt: null,
+            },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        role: true,
+                    },
+                },
+                site: {
+                    select: {
+                        id: true,
+                        name: true,
+                        siteCode: true,
+                        city: true,
+                        state: true,
+                    },
+                },
+            },
+            orderBy: { checkInAt: "desc" },
+        });
 
         if (existingCheckIn) {
             return res.status(200).json({
                 success: true,
                 message: "Already checked in at this site",
-
                 data: {
                     checkIn: existingCheckIn,
-
                     task: {
                         id: assignedTask.id,
                         title: assignedTask.title,
-                        description:
-                            assignedTask.description,
+                        description: assignedTask.description,
                         status: assignedTask.status,
-                        scheduledAt:
-                            assignedTask.scheduledAt,
-                        priority:
-                            assignedTask.priority,
-                        siteId:
-                            assignedTask.siteId,
+                        scheduledAt: assignedTask.scheduledAt,
+                        priority: assignedTask.priority,
+                        siteId: assignedTask.siteId,
                     },
-
                     alreadyCheckedIn: true,
                 },
             });
         }
 
-        // --------------------------------------------------------
-        // CREATE NEW CHECK-IN
-        // --------------------------------------------------------
+        // Save check-in selfie photo if provided
+        if (photoUrl) {
+            try {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
 
-        const checkIn =
-            await prisma.checkInOut.create({
-                data: {
-                    userId: userId,
-                    siteId: siteId,
-
-                    checkInAt:
-                        new Date(),
-
-                    checkInLatitude:
-                        parsedLatitude,
-
-                    checkInLongitude:
-                        parsedLongitude,
-
-                    status:
-                        "CHECKED_IN",
-                },
-
-                include: {
-                    user: {
-                        select: {
-                            id: true,
-                            name: true,
-                            email: true,
-                            role: true,
-                        },
+                const existingVisit = await prisma.visit.findFirst({
+                    where: {
+                        userId,
+                        siteId,
+                        visitAt: { gte: today },
                     },
+                    orderBy: { visitAt: "desc" },
+                });
 
-                    site: {
-                        select: {
-                            id: true,
-                            name: true,
-                            siteCode: true,
-                            city: true,
-                            state: true,
+                const evJson = JSON.stringify({ selfie: photoUrl, nameplate: "", photo1: photoUrl });
+
+                if (existingVisit) {
+                    let notes = existingVisit.notes || "";
+                    if (!notes.includes("[SITE_EVIDENCE]")) {
+                        notes = notes ? `${notes}\n[SITE_EVIDENCE]: ${evJson}` : `[SITE_EVIDENCE]: ${evJson}`;
+                    } else {
+                        try {
+                            const m = notes.match(/\[SITE_EVIDENCE\]:\s*(\{[\s\S]*?\})/);
+                            if (m) {
+                                const ev = JSON.parse(m[1]);
+                                ev.selfie = photoUrl;
+                                notes = notes.replace(m[0], `[SITE_EVIDENCE]: ${JSON.stringify(ev)}`);
+                            }
+                        } catch (_) { }
+                    }
+
+                    await prisma.visit.update({
+                        where: { id: existingVisit.id },
+                        data: {
+                            photoUrl: existingVisit.photoUrl || photoUrl,
+                            latitude: parsedLatitude ?? existingVisit.latitude,
+                            longitude: parsedLongitude ?? existingVisit.longitude,
+                            notes,
                         },
+                    });
+                } else {
+                    await prisma.visit.create({
+                        data: {
+                            userId,
+                            siteId,
+                            visitAt: new Date(),
+                            reportType: "Site Check-In",
+                            clientName: assignedTask?.title || "Client Site",
+                            latitude: parsedLatitude,
+                            longitude: parsedLongitude,
+                            photoUrl,
+                            status: "APPROVED",
+                            notes: `Check-in selfie photo verified at ${new Date().toLocaleTimeString("en-IN")}\n[SITE_EVIDENCE]: ${evJson}`,
+                        },
+                    });
+                }
+            } catch (vErr) {
+                console.error("Failed to persist check-in selfie in visit:", vErr);
+            }
+        }
+
+        const checkIn = await prisma.checkInOut.create({
+            data: {
+                userId: userId,
+                siteId: siteId,
+                checkInAt: new Date(),
+                checkInLatitude: parsedLatitude,
+                checkInLongitude: parsedLongitude,
+                status: "CHECKED_IN",
+            },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        role: true,
                     },
                 },
-            });
-
-        // --------------------------------------------------------
-        // SUCCESS
-        // --------------------------------------------------------
+                site: {
+                    select: {
+                        id: true,
+                        name: true,
+                        siteCode: true,
+                        city: true,
+                        state: true,
+                    },
+                },
+            },
+        });
 
         return res.status(201).json({
             success: true,
             message: "Check-in successful",
-
             data: {
-                checkIn,
-
+                checkIn: {
+                    ...checkIn,
+                    checkInPhotoUrl: photoUrl || null,
+                },
                 task: {
                     id: assignedTask.id,
                     title: assignedTask.title,
-                    description:
-                        assignedTask.description,
+                    description: assignedTask.description,
                     status: assignedTask.status,
-                    scheduledAt:
-                        assignedTask.scheduledAt,
-                    priority:
-                        assignedTask.priority,
-                    siteId:
-                        assignedTask.siteId,
+                    scheduledAt: assignedTask.scheduledAt,
+                    priority: assignedTask.priority,
+                    siteId: assignedTask.siteId,
                 },
-
                 alreadyCheckedIn: false,
             },
         });
     } catch (error) {
-        console.error(
-            "Create check-in error:",
-            error
-        );
-
+        console.error("Create check-in error:", error);
         return res.status(500).json({
             success: false,
             message: "Failed to check in",
@@ -386,18 +411,10 @@ const createCheckIn = async (req, res) => {
     }
 };
 
-
 /*
  * ============================================================
  * GET CHECK-INS
  * ============================================================
- *
- * Supervisor:
- * - only own records
- * - multiple sites allowed
- *
- * Admin:
- * - existing filters available
  */
 const getCheckIns = async (req, res) => {
     try {
@@ -415,38 +432,15 @@ const getCheckIns = async (req, res) => {
 
         const where = {};
 
-        // --------------------------------------------------------
-        // SUPERVISOR SECURITY
-        // --------------------------------------------------------
-
-        /*
-         * Security boundary is USER ID.
-         * NOT User.siteId.
-         */
-
-        if (
-            currentUser.role ===
-            "SUPERVISOR"
-        ) {
-            where.userId =
-                currentUser.userId;
+        if (currentUser.role === "SUPERVISOR") {
+            where.userId = currentUser.userId;
         }
 
-        // --------------------------------------------------------
-        // OPTIONAL SITE FILTER
-        // --------------------------------------------------------
-
         if (siteId) {
-            const site =
-                await prisma.site.findUnique({
-                    where: {
-                        id: siteId,
-                    },
-
-                    select: {
-                        id: true,
-                    },
-                });
+            const site = await prisma.site.findUnique({
+                where: { id: siteId },
+                select: { id: true },
+            });
 
             if (!site) {
                 return res.status(404).json({
@@ -458,416 +452,227 @@ const getCheckIns = async (req, res) => {
             where.siteId = siteId;
         }
 
-        // --------------------------------------------------------
-        // PAGINATION
-        // --------------------------------------------------------
-
-        const pageNumber = Math.max(
-            parseInt(page, 10) || 1,
-            1
-        );
-
-        const limitNumber = Math.min(
-            Math.max(
-                parseInt(limit, 10) || 10,
-                1
-            ),
-            100
-        );
-
-        const skip =
-            (pageNumber - 1) *
-            limitNumber;
-
-        // --------------------------------------------------------
-        // ROLE FILTER
-        // --------------------------------------------------------
+        const pageNumber = Math.max(parseInt(page, 10) || 1, 1);
+        const limitNumber = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100);
+        const skip = (pageNumber - 1) * limitNumber;
 
         if (role) {
-            const allowedRoles = [
-                "SUPER_ADMIN",
-                "SUPERVISOR",
-                "FIELD_STAFF",
-            ];
-
-            if (
-                !allowedRoles.includes(role)
-            ) {
+            const allowedRoles = ["SUPER_ADMIN", "SUPERVISOR", "FIELD_STAFF"];
+            if (!allowedRoles.includes(role)) {
                 return res.status(400).json({
                     success: false,
-                    message:
-                        "Invalid user role",
+                    message: "Invalid user role",
                 });
             }
-
-            where.user = {
-                role: role,
-            };
+            where.user = { role: role };
         }
 
-        // --------------------------------------------------------
-        // SEARCH
-        // --------------------------------------------------------
-
-        if (
-            search &&
-            search.trim()
-        ) {
-            const searchValue =
-                search.trim();
-
+        if (search && search.trim()) {
+            const searchValue = search.trim();
             where.OR = [
-                {
-                    user: {
-                        name: {
-                            contains:
-                                searchValue,
-                            mode:
-                                "insensitive",
-                        },
-                    },
-                },
-
-                {
-                    user: {
-                        email: {
-                            contains:
-                                searchValue,
-                            mode:
-                                "insensitive",
-                        },
-                    },
-                },
-
-                {
-                    site: {
-                        name: {
-                            contains:
-                                searchValue,
-                            mode:
-                                "insensitive",
-                        },
-                    },
-                },
-
-                {
-                    site: {
-                        siteCode: {
-                            contains:
-                                searchValue,
-                            mode:
-                                "insensitive",
-                        },
-                    },
-                },
-
-                {
-                    site: {
-                        city: {
-                            contains:
-                                searchValue,
-                            mode:
-                                "insensitive",
-                        },
-                    },
-                },
+                { user: { name: { contains: searchValue, mode: "insensitive" } } },
+                { user: { email: { contains: searchValue, mode: "insensitive" } } },
+                { site: { name: { contains: searchValue, mode: "insensitive" } } },
+                { site: { siteCode: { contains: searchValue, mode: "insensitive" } } },
+                { site: { city: { contains: searchValue, mode: "insensitive" } } },
             ];
         }
 
-        // --------------------------------------------------------
-        // DATE FILTER
-        // --------------------------------------------------------
-
-        if (
-            from ||
-            to
-        ) {
+        if (from || to) {
             where.checkInAt = {};
-
-            if (from) {
-                where.checkInAt.gte =
-                    new Date(
-                        `${from}T00:00:00.000Z`
-                    );
-            }
-
-            if (to) {
-                where.checkInAt.lte =
-                    new Date(
-                        `${to}T23:59:59.999Z`
-                    );
-            }
+            if (from) where.checkInAt.gte = new Date(`${from}T00:00:00.000Z`);
+            if (to) where.checkInAt.lte = new Date(`${to}T23:59:59.999Z`);
         }
 
-        // --------------------------------------------------------
-        // TOTAL
-        // --------------------------------------------------------
+        const total = await prisma.checkInOut.count({ where });
 
-        const total =
-            await prisma.checkInOut.count({
-                where: where,
-            });
-
-        // --------------------------------------------------------
-        // FETCH
-        // --------------------------------------------------------
-
-        const checkIns =
-            await prisma.checkInOut.findMany({
-                where: where,
-
-                skip: skip,
-                take: limitNumber,
-
-                include: {
-                    user: {
-                        select: {
-                            id: true,
-                            name: true,
-                            email: true,
-                            role: true,
-                        },
-                    },
-
-                    site: {
-                        select: {
-                            id: true,
-                            name: true,
-                            siteCode: true,
-                            city: true,
-                            state: true,
-                        },
+        const checkIns = await prisma.checkInOut.findMany({
+            where,
+            skip,
+            take: limitNumber,
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        phone: true,
+                        role: true,
                     },
                 },
-
-                orderBy: {
-                    checkInAt: "desc",
+                site: {
+                    select: {
+                        id: true,
+                        name: true,
+                        siteCode: true,
+                        city: true,
+                        state: true,
+                        address: true,
+                    },
                 },
-            });
+            },
+            orderBy: { checkInAt: "desc" },
+        });
 
-        // --------------------------------------------------------
-        // TOTAL PAGES
-        // --------------------------------------------------------
+        const totalPages = Math.ceil(total / limitNumber);
 
-        const totalPages =
-            Math.ceil(
-                total /
-                limitNumber
-            );
+        // Enrich each check-in strictly with Supervisor Selfie from [SITE_EVIDENCE]
+        const enrichedCheckIns = await Promise.all(
+            checkIns.map(async (ci) => {
+                const checkInDate = new Date(ci.checkInAt);
+                const dayStart = new Date(checkInDate);
+                dayStart.setHours(0, 0, 0, 0);
+                const dayEnd = new Date(checkInDate);
+                dayEnd.setHours(23, 59, 59, 999);
 
-        // --------------------------------------------------------
-        // RESPONSE
-        // --------------------------------------------------------
+                // 1. Visit on the same day for this user & site with [SITE_EVIDENCE]
+                let visit = await prisma.visit.findFirst({
+                    where: {
+                        userId: ci.userId,
+                        siteId: ci.siteId,
+                        visitAt: { gte: dayStart, lte: dayEnd },
+                        notes: { contains: "[SITE_EVIDENCE]" },
+                    },
+                    orderBy: { visitAt: "desc" },
+                });
+
+                // 2. If not found, any visit on same day
+                if (!visit) {
+                    visit = await prisma.visit.findFirst({
+                        where: {
+                            userId: ci.userId,
+                            siteId: ci.siteId,
+                            visitAt: { gte: dayStart, lte: dayEnd },
+                        },
+                        orderBy: { visitAt: "desc" },
+                    });
+                }
+
+                // 3. Fallback: closest visit for user & site with [SITE_EVIDENCE]
+                if (!visit || !visit.notes?.includes("[SITE_EVIDENCE]")) {
+                    const evVisit = await prisma.visit.findFirst({
+                        where: {
+                            userId: ci.userId,
+                            siteId: ci.siteId,
+                            notes: { contains: "[SITE_EVIDENCE]" },
+                        },
+                        orderBy: { visitAt: "desc" },
+                    });
+                    if (evVisit) {
+                        visit = evVisit;
+                    }
+                }
+
+                // 4. Fallback: any visit by this user with [SITE_EVIDENCE]
+                if (!visit || !visit.notes?.includes("[SITE_EVIDENCE]")) {
+                    const anyEvVisit = await prisma.visit.findFirst({
+                        where: {
+                            userId: ci.userId,
+                            notes: { contains: "[SITE_EVIDENCE]" },
+                        },
+                        orderBy: { visitAt: "desc" },
+                    });
+                    if (anyEvVisit) {
+                        visit = anyEvVisit;
+                    }
+                }
+
+                const selfie = extractSelfieFromVisit(visit);
+
+                return {
+                    ...ci,
+                    checkInPhotoUrl: selfie,
+                };
+            })
+        );
 
         return res.status(200).json({
             success: true,
-
-            count:
-                checkIns.length,
-
+            count: enrichedCheckIns.length,
             pagination: {
-                page:
-                    pageNumber,
-
-                limit:
-                    limitNumber,
-
-                total:
-                    total,
-
-                totalPages:
-                    totalPages,
+                page: pageNumber,
+                limit: limitNumber,
+                total,
+                totalPages,
             },
-
             data: {
-                checkIns:
-                    checkIns,
+                checkIns: enrichedCheckIns,
             },
         });
     } catch (error) {
-        console.error(
-            "Get check-ins error:",
-            error
-        );
-
+        console.error("Get check-ins error:", error);
         return res.status(500).json({
             success: false,
-            message:
-                "Failed to fetch check-ins",
-
-            error:
-                process.env.NODE_ENV ===
-                    "development"
-                    ? error.message
-                    : undefined,
+            message: "Failed to fetch check-ins",
+            error: process.env.NODE_ENV === "development" ? error.message : undefined,
         });
     }
 };
-
 
 /*
  * ============================================================
  * CHECK-OUT
  * ============================================================
- *
- * Supervisor can checkout only their own active check-in.
- *
- * Email:
- * - Triggered AFTER successful checkout.
- * - Email errors do NOT fail checkout.
- * - Audit email service will verify the completed task,
- *   audit submission, visit and client email before sending.
  */
 const checkOut = async (req, res) => {
     try {
-        const userId =
-            req.user.userId;
+        const userId = req.user.userId;
+        const { id } = req.params;
+        const { latitude, longitude } = req.body;
 
-        const { id } =
-            req.params;
-
-        const {
-            latitude,
-            longitude,
-        } = req.body;
-
-        // --------------------------------------------------------
-        // FIND ACTIVE CHECK-IN
-        // --------------------------------------------------------
-
-        const checkIn =
-            await prisma.checkInOut.findFirst({
-                where: {
-                    id: id,
-                    userId: userId,
-                    status:
-                        "CHECKED_IN",
-                    checkOutAt:
-                        null,
-                },
-            });
+        const checkIn = await prisma.checkInOut.findFirst({
+            where: {
+                id,
+                userId,
+                status: "CHECKED_IN",
+                checkOutAt: null,
+            },
+        });
 
         if (!checkIn) {
             return res.status(404).json({
                 success: false,
-                message:
-                    "Active check-in not found",
+                message: "Active check-in not found",
             });
         }
 
-        // --------------------------------------------------------
-        // VERIFY USER
-        // --------------------------------------------------------
-
-        const checkInUser =
-            await prisma.user.findUnique({
-                where: {
-                    id: userId,
-                },
-
-                select: {
-                    id: true,
-                    role: true,
-                    status: true,
-                },
-            });
+        const checkInUser = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { id: true, role: true, status: true },
+        });
 
         if (!checkInUser) {
             return res.status(404).json({
                 success: false,
-                message:
-                    "User not found",
+                message: "User not found",
             });
         }
 
-        if (
-            checkInUser.status !==
-            "ACTIVE"
-        ) {
+        if (checkInUser.status !== "ACTIVE") {
             return res.status(403).json({
                 success: false,
-                message:
-                    "User account is inactive",
+                message: "User account is inactive",
             });
         }
 
-        if (
-            checkInUser.role !==
-            "SUPERVISOR"
-        ) {
+        if (checkInUser.role !== "SUPERVISOR") {
             return res.status(403).json({
                 success: false,
-                message:
-                    "Only active Supervisors can check out",
+                message: "Only active Supervisors can check out",
             });
         }
-
-        // --------------------------------------------------------
-        // PARSE CHECKOUT LOCATION
-        // --------------------------------------------------------
 
         const parsedCheckoutLatitude =
-            latitude !== undefined &&
-                latitude !== null &&
-                latitude !== ""
+            latitude !== undefined && latitude !== null && latitude !== ""
                 ? Number(latitude)
                 : null;
 
         const parsedCheckoutLongitude =
-            longitude !== undefined &&
-                longitude !== null &&
-                longitude !== ""
+            longitude !== undefined && longitude !== null && longitude !== ""
                 ? Number(longitude)
                 : null;
 
-        // --------------------------------------------------------
-        // VALIDATE CHECKOUT LATITUDE
-        // --------------------------------------------------------
-
-        if (
-            parsedCheckoutLatitude !== null &&
-            (
-                Number.isNaN(
-                    parsedCheckoutLatitude
-                ) ||
-                parsedCheckoutLatitude < -90 ||
-                parsedCheckoutLatitude > 90
-            )
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Invalid checkout latitude",
-            });
-        }
-
-        // --------------------------------------------------------
-        // VALIDATE CHECKOUT LONGITUDE
-        // --------------------------------------------------------
-
-        if (
-            parsedCheckoutLongitude !== null &&
-            (
-                Number.isNaN(
-                    parsedCheckoutLongitude
-                ) ||
-                parsedCheckoutLongitude < -180 ||
-                parsedCheckoutLongitude > 180
-            )
-        ) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Invalid checkout longitude",
-            });
-        }
-
-        // --------------------------------------------------------
-        // CALCULATE DISTANCE
-        // --------------------------------------------------------
-
-        let distanceTravelled =
-            null;
+        let distanceTravelled = null;
 
         if (
             checkIn.checkInLatitude !== null &&
@@ -875,321 +680,168 @@ const checkOut = async (req, res) => {
             parsedCheckoutLatitude !== null &&
             parsedCheckoutLongitude !== null
         ) {
-            const toRadians =
-                (degrees) =>
-                    degrees *
-                    (
-                        Math.PI /
-                        180
-                    );
+            const toRadians = (deg) => deg * (Math.PI / 180);
+            const earthRadiusKm = 6371;
 
-            const earthRadiusKm =
-                6371;
-
-            const lat1 =
-                toRadians(
-                    Number(
-                        checkIn.checkInLatitude
-                    )
-                );
-
-            const lat2 =
-                toRadians(
-                    parsedCheckoutLatitude
-                );
-
-            const deltaLat =
-                toRadians(
-                    parsedCheckoutLatitude -
-                    Number(
-                        checkIn.checkInLatitude
-                    )
-                );
-
-            const deltaLon =
-                toRadians(
-                    parsedCheckoutLongitude -
-                    Number(
-                        checkIn.checkInLongitude
-                    )
-                );
+            const lat1 = toRadians(Number(checkIn.checkInLatitude));
+            const lat2 = toRadians(parsedCheckoutLatitude);
+            const deltaLat = toRadians(parsedCheckoutLatitude - Number(checkIn.checkInLatitude));
+            const deltaLon = toRadians(parsedCheckoutLongitude - Number(checkIn.checkInLongitude));
 
             const a =
-                Math.sin(
-                    deltaLat / 2
-                ) ** 2 +
-                Math.cos(lat1) *
-                Math.cos(lat2) *
-                Math.sin(
-                    deltaLon / 2
-                ) ** 2;
+                Math.sin(deltaLat / 2) ** 2 +
+                Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
-            const c =
-                2 *
-                Math.atan2(
-                    Math.sqrt(a),
-                    Math.sqrt(1 - a)
-                );
-
-            distanceTravelled =
-                Number(
-                    (
-                        earthRadiusKm *
-                        c
-                    ).toFixed(3)
-                );
+            distanceTravelled = Number((earthRadiusKm * c).toFixed(3));
         }
 
-        // --------------------------------------------------------
-        // UPDATE CHECK-IN
-        // --------------------------------------------------------
-
-        const updatedCheckIn =
-            await prisma.checkInOut.update({
-                where: {
-                    id:
-                        checkIn.id,
-                },
-
-                data: {
-                    checkOutAt:
-                        new Date(),
-
-                    checkOutLatitude:
-                        parsedCheckoutLatitude,
-
-                    checkOutLongitude:
-                        parsedCheckoutLongitude,
-
-                    distanceTravelled:
-                        distanceTravelled,
-
-                    status:
-                        "CHECKED_OUT",
-                },
-
-                include: {
-                    user: {
-                        select: {
-                            id: true,
-                            name: true,
-                            email: true,
-                            role: true,
-                        },
-                    },
-
-                    site: {
-                        select: {
-                            id: true,
-                            name: true,
-                            siteCode: true,
-                            city: true,
-                            state: true,
-                        },
+        const updatedCheckIn = await prisma.checkInOut.update({
+            where: { id: checkIn.id },
+            data: {
+                checkOutAt: new Date(),
+                checkOutLatitude: parsedCheckoutLatitude,
+                checkOutLongitude: parsedCheckoutLongitude,
+                distanceTravelled,
+                status: "CHECKED_OUT",
+            },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        role: true,
                     },
                 },
-            });
-
-        // --------------------------------------------------------
-        // AUDIT COMPLETION EMAIL
-        // --------------------------------------------------------
-        /*
-         * IMPORTANT:
-         *
-         * Checkout must remain successful even if the email
-         * service fails.
-         *
-         * The email service will verify:
-         * - completed Task
-         * - correct Supervisor
-         * - correct Site
-         * - Visit
-         * - AuditSubmission
-         * - Audit answers
-         * - Client email
-         * - Visit photo
-         *
-         * The email is sent from the Google Apps Script account.
-         */
+                site: {
+                    select: {
+                        id: true,
+                        name: true,
+                        siteCode: true,
+                        city: true,
+                        state: true,
+                    },
+                },
+            },
+        });
 
         sendAuditCompletionEmail({
-            checkInId:
-                updatedCheckIn.id,
+            checkInId: updatedCheckIn.id,
         })
             .then((result) => {
-                console.log(
-                    "Audit completion email result:",
-                    result
-                );
+                console.log("Audit completion email result:", result);
             })
             .catch((emailError) => {
-                console.error(
-                    "Audit completion email failed:",
-                    emailError
-                );
+                console.error("Audit completion email failed:", emailError);
             });
-
-        // --------------------------------------------------------
-        // RESPONSE
-        // --------------------------------------------------------
 
         return res.status(200).json({
             success: true,
-            message:
-                "Check-out successful",
-
+            message: "Check-out successful",
             data: {
-                checkIn:
-                    updatedCheckIn,
+                checkIn: updatedCheckIn,
             },
         });
     } catch (error) {
-        console.error(
-            "Check-out error:",
-            error
-        );
-
+        console.error("Check-out error:", error);
         return res.status(500).json({
             success: false,
-            message:
-                "Failed to check out",
-
-            error:
-                process.env.NODE_ENV ===
-                    "development"
-                    ? error.message
-                    : undefined,
+            message: "Failed to check out",
+            error: process.env.NODE_ENV === "development" ? error.message : undefined,
         });
     }
 };
-
 
 /*
  * ============================================================
  * GET CHECK-IN BY ID
  * ============================================================
- *
- * Supervisor can access only their own record.
  */
-const getCheckInById = async (
-    req,
-    res
-) => {
+const getCheckInById = async (req, res) => {
     try {
-        const { id } =
-            req.params;
+        const { id } = req.params;
+        const currentUser = req.user;
 
-        const currentUser =
-            req.user;
-
-        // --------------------------------------------------------
-        // FETCH CHECK-IN
-        // --------------------------------------------------------
-
-        const checkIn =
-            await prisma.checkInOut.findUnique({
-                where: {
-                    id: id,
-                },
-
-                include: {
-                    user: {
-                        select: {
-                            id: true,
-                            name: true,
-                            email: true,
-                            phone: true,
-                            role: true,
-                            status: true,
-                        },
-                    },
-
-                    site: {
-                        select: {
-                            id: true,
-                            name: true,
-                            siteCode: true,
-                            address: true,
-                            city: true,
-                            state: true,
-                            pincode: true,
-                            latitude: true,
-                            longitude: true,
-                        },
+        const checkIn = await prisma.checkInOut.findUnique({
+            where: { id },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        phone: true,
+                        role: true,
+                        status: true,
                     },
                 },
-            });
-
-        // --------------------------------------------------------
-        // NOT FOUND
-        // --------------------------------------------------------
+                site: {
+                    select: {
+                        id: true,
+                        name: true,
+                        siteCode: true,
+                        address: true,
+                        city: true,
+                        state: true,
+                        pincode: true,
+                        latitude: true,
+                        longitude: true,
+                    },
+                },
+            },
+        });
 
         if (!checkIn) {
             return res.status(404).json({
                 success: false,
-                message:
-                    "Check-in record not found",
+                message: "Check-in record not found",
             });
         }
 
-        // --------------------------------------------------------
-        // SUPERVISOR SECURITY
-        // --------------------------------------------------------
-
-        if (
-            currentUser.role ===
-            "SUPERVISOR"
-        ) {
-            if (
-                checkIn.userId !==
-                currentUser.userId
-            ) {
-                return res.status(403).json({
-                    success: false,
-                    message:
-                        "You do not have permission to access this check-in",
-                });
-            }
+        if (currentUser.role === "SUPERVISOR" && checkIn.userId !== currentUser.userId) {
+            return res.status(403).json({
+                success: false,
+                message: "You do not have permission to access this check-in",
+            });
         }
 
-        // --------------------------------------------------------
-        // RESPONSE
-        // --------------------------------------------------------
+        let visit = await prisma.visit.findFirst({
+            where: {
+                userId: checkIn.userId,
+                siteId: checkIn.siteId,
+                notes: { contains: "[SITE_EVIDENCE]" },
+            },
+            orderBy: { visitAt: "desc" },
+        });
+
+        if (!visit) {
+            visit = await prisma.visit.findFirst({
+                where: { userId: checkIn.userId, siteId: checkIn.siteId },
+                orderBy: { visitAt: "desc" },
+            });
+        }
+
+        const selfie = extractSelfieFromVisit(visit);
 
         return res.status(200).json({
             success: true,
-
             data: {
-                checkIn:
-                    checkIn,
+                checkIn: {
+                    ...checkIn,
+                    checkInPhotoUrl: selfie,
+                },
             },
         });
     } catch (error) {
-        console.error(
-            "Get check-in by ID error:",
-            error
-        );
-
+        console.error("Get check-in by ID error:", error);
         return res.status(500).json({
             success: false,
-            message:
-                "Failed to fetch check-in record",
-
-            error:
-                process.env.NODE_ENV ===
-                    "development"
-                    ? error.message
-                    : undefined,
+            message: "Failed to fetch check-in record",
+            error: process.env.NODE_ENV === "development" ? error.message : undefined,
         });
     }
 };
-
-
-/*
- * ============================================================
- * EXPORTS
- * ============================================================
- */
 
 export {
     createCheckIn,

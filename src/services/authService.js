@@ -8,7 +8,8 @@ const generateAccessToken = (user) => {
         },
         process.env.JWT_SECRET,
         {
-            expiresIn: "15m",
+            // Token tab tak valid rahega jab tak supervisor explicitly logout na kare
+            expiresIn: "365d",
         }
     );
 };
@@ -20,23 +21,17 @@ const generateRefreshToken = (user) => {
         },
         process.env.JWT_REFRESH_SECRET,
         {
-            expiresIn: "7d",
+            expiresIn: "365d",
         }
     );
 };
 
 const verifyAccessToken = (token) => {
-    return jwt.verify(
-        token,
-        process.env.JWT_SECRET
-    );
+    return jwt.verify(token, process.env.JWT_SECRET);
 };
 
 const verifyRefreshToken = (token) => {
-    return jwt.verify(
-        token,
-        process.env.JWT_REFRESH_SECRET
-    );
+    return jwt.verify(token, process.env.JWT_REFRESH_SECRET);
 };
 
 export {

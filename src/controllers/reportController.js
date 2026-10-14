@@ -306,311 +306,161 @@ const matchesCommonFilters = (
 /* =========================================================
    TASK REPORT
 ========================================================= */
-
 const buildTaskReport = async () => {
-    const tasks =
-        await prisma.task.findMany({
-            /*
-             * IMPORTANT:
-             *
-             * clientEmail is explicitly selected
-             * from Task table.
-             *
-             * No Supervisor email is selected
-             * for the report email field.
-             */
-            select: {
-                id: true,
-
-                title: true,
-
-                description: true,
-
-                clientEmail: true,
-
-                status: true,
-
-                scheduledAt: true,
-
-                assignedToId: true,
-
-                assignedTo: {
-                    select: {
-                        id: true,
-                        name: true,
-                        phone: true,
-                    },
-                },
-
-                site: {
-                    select: {
-                        id: true,
-                        name: true,
-                        city: true,
-                        state: true,
-                    },
-                },
+    const tasks = await prisma.task.findMany({
+        select: {
+            id: true,
+            title: true,
+            description: true,
+            clientEmail: true,
+            status: true,
+            scheduledAt: true,
+            assignedToId: true,
+            assignedTo: {
+                select: { id: true, name: true, phone: true },
             },
-
-            orderBy: {
-                scheduledAt: "desc",
+            site: {
+                select: { id: true, name: true, city: true, state: true },
             },
-        });
+        },
+        orderBy: { scheduledAt: "desc" },
+    });
 
-    return tasks.map(
-        (task) => ({
+    const taskUserIds = [...new Set(tasks.map((t) => t.assignedToId).filter(Boolean))];
+    const taskSiteIds = [...new Set(tasks.map((t) => t.site?.id).filter(Boolean))];
+
+    const taskCheckIns = await prisma.checkInOut.findMany({
+        where: {
+            userId: { in: taskUserIds },
+            siteId: { in: taskSiteIds },
+        },
+        orderBy: { checkInAt: "desc" },
+    });
+
+    return tasks.map((task) => {
+        const matched = taskCheckIns.find(
+            (ci) => ci.userId === task.assignedToId && ci.siteId === task.site?.id
+        );
+
+        return {
             id: task.id,
-
-            rawDate:
-                task.scheduledAt,
-
-            date:
-                formatDate(
-                    task.scheduledAt
-                ),
-
-            user:
-                task.assignedTo?.name ||
-                "-",
-
-            client:
-                getTaskClient(task),
-
-            /*
-             * THIS MUST BE CLIENT EMAIL.
-             */
-            clientEmail:
-                getTaskClientEmail(
-                    task
-                ),
-
-            site:
-                task.site?.name ||
-                "-",
-
-            type:
-                getTaskType(task),
-
-            status:
-                getTaskStatus(task),
-
-            checkIn: "-",
-
-            checkOut: "-",
-
-            distance: "0.00",
-
-            region:
-                getRegion(
-                    task.site
-                ),
-
-            branch:
-                getBranch(
-                    task.site
-                ),
-        })
-    );
+            rawDate: task.scheduledAt,
+            date: formatDate(task.scheduledAt),
+            user: task.assignedTo?.name || "-",
+            client: getTaskClient(task),
+            clientEmail: getTaskClientEmail(task),
+            site: task.site?.name || "-",
+            type: getTaskType(task),
+            status: getTaskStatus(task),
+            checkIn: matched ? formatTime(matched.checkInAt) : "-",
+            checkOut: matched?.checkOutAt ? formatTime(matched.checkOutAt) : "-",
+            distance: matched?.distanceTravelled ? matched.distanceTravelled.toFixed(2) : "0.00",
+            region: getRegion(task.site),
+            branch: getBranch(task.site),
+        };
+    });
 };
 
 /* =========================================================
    VISIT REPORT
 ========================================================= */
+const buildVisitReport = async () => {
+    const visits = await prisma.visit.findMany({
+        include: {
+            user: { select: { id: true, name: true, phone: true } },
+            site: { select: { id: true, name: true, city: true, state: true } },
+        },
+        orderBy: { visitAt: "desc" },
+    });
 
-const buildVisitReport =
-    async () => {
-        const visits =
-            await prisma.visit.findMany(
-                {
-                    include: {
-                        user: {
-                            select: {
-                                id: true,
-                                name: true,
-                                phone: true,
-                            },
-                        },
+    const visitUserIds = [...new Set(visits.map((v) => v.userId).filter(Boolean))];
+    const visitSiteIds = [...new Set(visits.map((v) => v.siteId).filter(Boolean))];
 
-                        site: {
-                            select: {
-                                id: true,
-                                name: true,
-                                city: true,
-                                state: true,
-                            },
-                        },
-                    },
+    const visitCheckIns = await prisma.checkInOut.findMany({
+        where: {
+            userId: { in: visitUserIds },
+            siteId: { in: visitSiteIds },
+        },
+        orderBy: { checkInAt: "desc" },
+    });
 
-                    orderBy: {
-                        visitAt:
-                            "desc",
-                    },
-                }
-            );
-
-        return visits.map(
-            (visit) => ({
-                id: visit.id,
-
-                rawDate:
-                    visit.visitAt,
-
-                date:
-                    formatDate(
-                        visit.visitAt
-                    ),
-
-                user:
-                    visit.user?.name ||
-                    "-",
-
-                client:
-                    visit.clientName ||
-                    "-",
-
-                site:
-                    visit.site?.name ||
-                    "-",
-
-                type:
-                    visit.reportType ||
-                    "Visit",
-
-                status:
-                    visit.status,
-
-                checkIn: "-",
-
-                checkOut: "-",
-
-                distance:
-                    "0.00",
-
-                region:
-                    getRegion(
-                        visit.site
-                    ),
-
-                branch:
-                    getBranch(
-                        visit.site
-                    ),
-            })
+    return visits.map((visit) => {
+        const matched = visitCheckIns.find(
+            (ci) => ci.userId === visit.userId && ci.siteId === visit.siteId
         );
-    };
+
+        return {
+            id: visit.id,
+            rawDate: visit.visitAt,
+            date: formatDate(visit.visitAt),
+            user: visit.user?.name || "-",
+            client: visit.clientName || "-",
+            site: visit.site?.name || "-",
+            type: visit.reportType || "Visit",
+            status: visit.status,
+            checkIn: matched ? formatTime(matched.checkInAt) : "-",
+            checkOut: matched?.checkOutAt ? formatTime(matched.checkOutAt) : "-",
+            photoUrl: visit.photoUrl || null,
+            distance: matched?.distanceTravelled ? matched.distanceTravelled.toFixed(2) : "0.00",
+            region: getRegion(visit.site),
+            branch: getBranch(visit.site),
+        };
+    });
+};
 
 /* =========================================================
    AUDIT REPORT
 ========================================================= */
+const buildAuditReport = async () => {
+    const submissions = await prisma.auditSubmission.findMany({
+        include: {
+            visit: {
+                include: {
+                    user: { select: { id: true, name: true, phone: true } },
+                    site: { select: { id: true, name: true, city: true, state: true } },
+                },
+            },
+            template: { select: { id: true, name: true } },
+        },
+        orderBy: { submittedAt: "desc" },
+    });
 
-const buildAuditReport =
-    async () => {
-        const submissions =
-            await prisma.auditSubmission.findMany(
-                {
-                    include: {
-                        visit: {
-                            include: {
-                                user: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        phone: true,
-                                    },
-                                },
+    const auditUserIds = [...new Set(submissions.map((s) => s.visit?.userId).filter(Boolean))];
+    const auditSiteIds = [...new Set(submissions.map((s) => s.visit?.siteId).filter(Boolean))];
 
-                                site: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        city: true,
-                                        state: true,
-                                    },
-                                },
-                            },
-                        },
+    const auditCheckIns = await prisma.checkInOut.findMany({
+        where: {
+            userId: { in: auditUserIds },
+            siteId: { in: auditSiteIds },
+        },
+        orderBy: { checkInAt: "desc" },
+    });
 
-                        template: {
-                            select: {
-                                id: true,
-                                name: true,
-                            },
-                        },
-                    },
-
-                    orderBy: {
-                        submittedAt:
-                            "desc",
-                    },
-                }
-            );
-
-        return submissions.map(
-            (submission) => {
-                const visit =
-                    submission.visit;
-
-                return {
-                    id:
-                        submission.id,
-
-                    visitId:
-                        visit?.id ||
-                        null,
-
-                    rawDate:
-                        submission.submittedAt,
-
-                    date:
-                        formatDate(
-                            submission.submittedAt
-                        ),
-
-                    user:
-                        visit?.user?.name ||
-                        "-",
-
-                    client:
-                        visit?.clientName ||
-                        "-",
-
-                    site:
-                        visit?.site?.name ||
-                        "-",
-
-                    type:
-                        submission
-                            ?.template
-                            ?.name ||
-                        "Audit",
-
-                    status:
-                        visit?.status ||
-                        "PENDING",
-
-                    checkIn:
-                        "-",
-
-                    checkOut:
-                        "-",
-
-                    distance:
-                        "0.00",
-
-                    region:
-                        getRegion(
-                            visit?.site
-                        ),
-
-                    branch:
-                        getBranch(
-                            visit?.site
-                        ),
-                };
-            }
+    return submissions.map((submission) => {
+        const visit = submission.visit;
+        const matched = auditCheckIns.find(
+            (ci) => ci.userId === visit?.userId && ci.siteId === visit?.siteId
         );
-    };
 
+        return {
+            id: submission.id,
+            visitId: visit?.id || null,
+            rawDate: submission.submittedAt,
+            date: formatDate(submission.submittedAt),
+            user: visit?.user?.name || "-",
+            client: visit?.clientName || "-",
+            site: visit?.site?.name || "-",
+            type: submission?.template?.name || "Audit",
+            status: visit?.status || "PENDING",
+            checkIn: matched ? formatTime(matched.checkInAt) : "-",
+            checkOut: matched?.checkOutAt ? formatTime(matched.checkOutAt) : "-",
+            photoUrl: visit?.photoUrl || null,
+            distance: matched?.distanceTravelled ? matched.distanceTravelled.toFixed(2) : "0.00",
+            region: getRegion(visit?.site),
+            branch: getBranch(visit?.site),
+        };
+    });
+};
 /* =========================================================
    CHECK-IN / CHECK-OUT REPORT
 ========================================================= */
