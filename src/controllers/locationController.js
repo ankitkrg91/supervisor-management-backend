@@ -15,8 +15,21 @@ const updateLocation = async (req, res) => {
         const {
             latitude,
             longitude,
-            batteryLevel,
         } = req.body;
+
+        // Accepts both batteryLevel and batteryPercentage from mobile app
+        const rawBattery =
+            req.body.batteryLevel !== undefined
+                ? req.body.batteryLevel
+                : req.body.batteryPercentage;
+
+        let batteryLevel = null;
+        if (rawBattery !== undefined && rawBattery !== null) {
+            const parsed = Number(rawBattery);
+            if (!Number.isNaN(parsed) && parsed >= 0 && parsed <= 100) {
+                batteryLevel = Math.round(parsed);
+            }
+        }
 
         // Only SUPERVISOR can send GPS location
         if (req.user.role !== "SUPERVISOR") {
@@ -47,21 +60,6 @@ const updateLocation = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: "Invalid longitude",
-            });
-        }
-
-        if (
-            batteryLevel !== undefined &&
-            (
-                typeof batteryLevel !== "number" ||
-                !Number.isInteger(batteryLevel) ||
-                batteryLevel < 0 ||
-                batteryLevel > 100
-            )
-        ) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid battery level",
             });
         }
 

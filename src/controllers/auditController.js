@@ -170,7 +170,7 @@ const getAuditChecklist = async (req, res) => {
 
 const createChecklistQuestion = async (req, res) => {
     try {
-        const { questionNo, question, isRequired } = req.body;
+        const { questionNo, question, type, isRequired } = req.body;
         const numericNo = Number(questionNo);
         if (!numericNo || !question?.trim()) {
             return res.status(400).json({ success: false, message: "Question number and text are required" });
@@ -187,7 +187,7 @@ const createChecklistQuestion = async (req, res) => {
         if (existing) {
             const updated = await prisma.auditQuestion.update({
                 where: { id: existing.id },
-                data: { question: question.trim(), isRequired: isRequired !== false, isActive: true },
+                data: { question: question.trim(), type: type || existing.type || "YES_NO", isRequired: isRequired !== false, isActive: true },
             });
             return res.status(200).json({ success: true, data: { question: updated } });
         }
@@ -196,7 +196,7 @@ const createChecklistQuestion = async (req, res) => {
                 templateId: template.id,
                 questionNo: numericNo,
                 question: question.trim(),
-                type: "YES_NO",
+                type: type || "YES_NO",
                 isRequired: isRequired !== false,
                 isActive: true,
             },
@@ -247,16 +247,21 @@ const submitAudit = async (req, res) => {
                 answers: {
                     create: validAnswers.map((answer, idx) => {
                         const question = questionMap.get(answer.questionId);
+                        const isTextType = question.type === "TEXT";
                         const hasPhotos = Array.isArray(answer.photos) && answer.photos.length > 0;
+                        const hasTextValue = answer.textValue !== undefined && answer.textValue !== null && String(answer.textValue).trim().length > 0;
+
                         return {
                             questionId: question.id,
                             questionNo: idx + 1, // Always sequential 1, 2, 3...
                             questionText: question.question,
-                            booleanValue: typeof answer.booleanValue === "boolean" ? answer.booleanValue : true,
-                            textValue: hasPhotos
-                                ? JSON.stringify(answer.photos)
-                                : answer.textValue !== undefined && answer.textValue !== null
-                                    ? String(answer.textValue)
+                            booleanValue: typeof answer.booleanValue === "boolean"
+                                ? answer.booleanValue
+                                : (isTextType ? null : true),
+                            textValue: hasTextValue
+                                ? String(answer.textValue).trim()
+                                : hasPhotos
+                                    ? JSON.stringify(answer.photos)
                                     : null,
                         };
                     }),
