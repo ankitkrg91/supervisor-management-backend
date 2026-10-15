@@ -124,7 +124,17 @@ const createVisit = async (req, res) => {
             if (cleanPhotoFileId) updateData.photoFileId = cleanPhotoFileId;
             if (parsedLatitude !== null) updateData.latitude = parsedLatitude;
             if (parsedLongitude !== null) updateData.longitude = parsedLongitude;
-            if (cleanNotes) updateData.notes = cleanNotes;
+            if (cleanNotes) {
+                let finalNotes = cleanNotes;
+                // Preserve [ALTERNATE_CHECKIN] tag if already present on this visit
+                if (existingVisit.notes && existingVisit.notes.includes("[ALTERNATE_CHECKIN]") && !finalNotes.includes("[ALTERNATE_CHECKIN]")) {
+                    const match = existingVisit.notes.match(/\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/);
+                    if (match) {
+                        finalNotes = `${finalNotes}\n[ALTERNATE_CHECKIN]: ${match[1]}`;
+                    }
+                }
+                updateData.notes = finalNotes;
+            }
             if (typeof reportType === "string" && reportType.trim()) updateData.reportType = reportType.trim();
             if (typeof clientName === "string" && clientName.trim()) updateData.clientName = clientName.trim();
 
@@ -141,6 +151,22 @@ const createVisit = async (req, res) => {
             });
         }
 
+        // Nayi visit banne par bhi agar aaj alternate checkin hua tha toh tag carry forward karein
+        let createNotes = cleanNotes;
+        if (!createNotes?.includes("[ALTERNATE_CHECKIN]")) {
+            const startOfDay = new Date();
+            startOfDay.setHours(0, 0, 0, 0);
+            const altVisit = await prisma.visit.findFirst({
+                where: { userId, siteId, visitAt: { gte: startOfDay }, notes: { contains: "[ALTERNATE_CHECKIN]" } },
+            });
+            if (altVisit?.notes) {
+                const match = altVisit.notes.match(/\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/);
+                if (match) {
+                    createNotes = createNotes ? `${createNotes}\n[ALTERNATE_CHECKIN]: ${match[1]}` : `[ALTERNATE_CHECKIN]: ${match[1]}`;
+                }
+            }
+        }
+
         const visit = await prisma.visit.create({
             data: {
                 userId,
@@ -154,7 +180,7 @@ const createVisit = async (req, res) => {
                 longitude: parsedLongitude,
                 photoUrl: cleanPhotoUrl,
                 photoFileId: cleanPhotoFileId,
-                notes: cleanNotes,
+                notes: createNotes,
                 status: "PENDING",
             },
             include: visitInclude,

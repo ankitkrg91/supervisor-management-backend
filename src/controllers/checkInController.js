@@ -5,13 +5,10 @@ import { sendAuditCompletionEmail } from "../services/auditEmailService.js";
  * ============================================================
  * HELPER: EXTRACT SUPERVISOR SELFIE FROM VISIT
  * ============================================================
- * Extracts the actual supervisor face selfie from [SITE_EVIDENCE]
- * so that site entrance photos (photo1) are never mistaken for selfies.
  */
 const extractSelfieFromVisit = (visit) => {
     if (!visit) return null;
 
-    // Priority 1: Extract 'selfie' from [SITE_EVIDENCE] in notes
     if (visit.notes && typeof visit.notes === "string") {
         try {
             const m = visit.notes.match(/\[SITE_EVIDENCE\]:\s*(\{[\s\S]*?\})/);
@@ -24,7 +21,6 @@ const extractSelfieFromVisit = (visit) => {
         } catch (_) { }
     }
 
-    // Priority 2: Extract from direct [CHECKIN_SELFIE] tag in notes
     if (visit.notes && typeof visit.notes === "string") {
         try {
             const m = visit.notes.match(/\[CHECKIN_SELFIE\]:\s*(data:image\/[^\s\n]+|https?:\/\/[^\s\n]+)/);
@@ -34,7 +30,6 @@ const extractSelfieFromVisit = (visit) => {
         } catch (_) { }
     }
 
-    // Priority 3: If visit was created as dedicated "Site Check-In", photoUrl is check-in selfie
     if (visit.reportType === "Site Check-In" && visit.photoUrl) {
         return visit.photoUrl.trim();
     }
@@ -44,7 +39,7 @@ const extractSelfieFromVisit = (visit) => {
 
 /*
  * ============================================================
- * CREATE CHECK-IN
+ * CREATE CHECK-IN (SUPPORTS STANDARD & RAIN/EMERGENCY EXCEPTION)
  * ============================================================
  */
 const createCheckIn = async (req, res) => {
@@ -56,6 +51,8 @@ const createCheckIn = async (req, res) => {
             latitude,
             longitude,
             photoUrl,
+            isAlternate,
+            alternateReason,
         } = req.body;
 
         if (!siteId) {
@@ -186,7 +183,7 @@ const createCheckIn = async (req, res) => {
             });
         }
 
-        // 100-Meter Geofence check
+        // 100-Meter Geofence check (Bypassed if Rain/Emergency Alternate Mode)
         const calculateDistanceMeters = (lat1, lon1, lat2, lon2) => {
             const R = 6371e3;
             const phi1 = (lat1 * Math.PI) / 180;
@@ -201,6 +198,9 @@ const createCheckIn = async (req, res) => {
             return R * c;
         };
 
+        const isAlternateMode = Boolean(isAlternate) || Boolean(alternateReason);
+        let calculatedDistance = null;
+
         if (
             site.latitude !== null &&
             site.latitude !== undefined &&
@@ -209,19 +209,20 @@ const createCheckIn = async (req, res) => {
             parsedLatitude !== null &&
             parsedLongitude !== null
         ) {
-            const distanceMeters = calculateDistanceMeters(
+            calculatedDistance = calculateDistanceMeters(
                 parsedLatitude,
                 parsedLongitude,
                 site.latitude,
                 site.longitude
             );
 
-            if (distanceMeters > 100) {
+            // Enforce 100m geofence ONLY IF NOT in Alternate/Rain mode
+            if (!isAlternateMode && calculatedDistance > 100) {
                 return res.status(400).json({
                     success: false,
-                    message: `Check-in is only allowed within 100 meters of the site. You are currently ${Math.round(distanceMeters)}m away from ${site.name}.`,
+                    message: `Check-in is only allowed within 100 meters of the site. You are currently ${Math.round(calculatedDistance)}m away from ${site.name}. Use Rain/Emergency Check-In if unable to reach site.`,
                     data: {
-                        distanceMeters: Math.round(distanceMeters),
+                        distanceMeters: Math.round(calculatedDistance),
                         allowedRadiusMeters: 100,
                         siteName: site.name,
                     },
@@ -264,6 +265,8 @@ const createCheckIn = async (req, res) => {
                         siteCode: true,
                         city: true,
                         state: true,
+                        latitude: true,
+                        longitude: true,
                     },
                 },
             },
@@ -290,66 +293,67 @@ const createCheckIn = async (req, res) => {
             });
         }
 
-        // Save check-in selfie photo if provided
-        if (photoUrl) {
-            try {
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
+        // Record check-in visit note with reason if Alternate
+        try {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
 
-                const existingVisit = await prisma.visit.findFirst({
-                    where: {
+            const existingVisit = await prisma.visit.findFirst({
+                where: {
+                    userId,
+                    siteId,
+                    visitAt: { gte: today },
+                },
+                orderBy: { visitAt: "desc" },
+            });
+
+            const reasonTag = isAlternateMode
+                ? `[ALTERNATE_CHECKIN]: ${alternateReason || "Rain / Weather Emergency"} (Geofence Bypassed)`
+                : `[STANDARD_CHECKIN]: Verified within 100m`;
+
+            const evJson = JSON.stringify({
+                selfie: photoUrl || "",
+                nameplate: "",
+                photo1: photoUrl || "",
+            });
+
+            if (existingVisit) {
+                let notes = existingVisit.notes || "";
+                if (!notes.includes("[SITE_EVIDENCE]")) {
+                    notes = notes
+                        ? `${notes}\n[SITE_EVIDENCE]: ${evJson}\n${reasonTag}`
+                        : `[SITE_EVIDENCE]: ${evJson}\n${reasonTag}`;
+                } else if (!notes.includes("[ALTERNATE_CHECKIN]") && isAlternateMode) {
+                    notes = `${notes}\n${reasonTag}`;
+                }
+
+                await prisma.visit.update({
+                    where: { id: existingVisit.id },
+                    data: {
+                        photoUrl: existingVisit.photoUrl || photoUrl || null,
+                        latitude: parsedLatitude ?? existingVisit.latitude,
+                        longitude: parsedLongitude ?? existingVisit.longitude,
+                        notes,
+                    },
+                });
+            } else {
+                await prisma.visit.create({
+                    data: {
                         userId,
                         siteId,
-                        visitAt: { gte: today },
+                        visitAt: new Date(),
+                        reportType: isAlternateMode ? "Alternate Check-In (Rain/Emergency)" : "Site Check-In",
+                        clientName: assignedTask?.title || "Client Site",
+                        latitude: parsedLatitude,
+                        longitude: parsedLongitude,
+                        photoUrl: photoUrl || null,
+                        status: "APPROVED",
+                        notes: `Check-in verified at ${new Date().toLocaleTimeString("en-IN")}\n[SITE_EVIDENCE]: ${evJson}\n${reasonTag}`,
                     },
-                    orderBy: { visitAt: "desc" },
                 });
-
-                const evJson = JSON.stringify({ selfie: photoUrl, nameplate: "", photo1: photoUrl });
-
-                if (existingVisit) {
-                    let notes = existingVisit.notes || "";
-                    if (!notes.includes("[SITE_EVIDENCE]")) {
-                        notes = notes ? `${notes}\n[SITE_EVIDENCE]: ${evJson}` : `[SITE_EVIDENCE]: ${evJson}`;
-                    } else {
-                        try {
-                            const m = notes.match(/\[SITE_EVIDENCE\]:\s*(\{[\s\S]*?\})/);
-                            if (m) {
-                                const ev = JSON.parse(m[1]);
-                                ev.selfie = photoUrl;
-                                notes = notes.replace(m[0], `[SITE_EVIDENCE]: ${JSON.stringify(ev)}`);
-                            }
-                        } catch (_) { }
-                    }
-
-                    await prisma.visit.update({
-                        where: { id: existingVisit.id },
-                        data: {
-                            photoUrl: existingVisit.photoUrl || photoUrl,
-                            latitude: parsedLatitude ?? existingVisit.latitude,
-                            longitude: parsedLongitude ?? existingVisit.longitude,
-                            notes,
-                        },
-                    });
-                } else {
-                    await prisma.visit.create({
-                        data: {
-                            userId,
-                            siteId,
-                            visitAt: new Date(),
-                            reportType: "Site Check-In",
-                            clientName: assignedTask?.title || "Client Site",
-                            latitude: parsedLatitude,
-                            longitude: parsedLongitude,
-                            photoUrl,
-                            status: "APPROVED",
-                            notes: `Check-in selfie photo verified at ${new Date().toLocaleTimeString("en-IN")}\n[SITE_EVIDENCE]: ${evJson}`,
-                        },
-                    });
-                }
-            } catch (vErr) {
-                console.error("Failed to persist check-in selfie in visit:", vErr);
             }
+        } catch (vErr) {
+            console.error("Failed to persist check-in visit record:", vErr);
         }
 
         const checkIn = await prisma.checkInOut.create({
@@ -377,6 +381,8 @@ const createCheckIn = async (req, res) => {
                         siteCode: true,
                         city: true,
                         state: true,
+                        latitude: true,
+                        longitude: true,
                     },
                 },
             },
@@ -384,11 +390,15 @@ const createCheckIn = async (req, res) => {
 
         return res.status(201).json({
             success: true,
-            message: "Check-in successful",
+            message: isAlternateMode
+                ? "Alternate check-in successful (Rain/Emergency Exception granted)"
+                : "Check-in successful",
             data: {
                 checkIn: {
                     ...checkIn,
                     checkInPhotoUrl: photoUrl || null,
+                    isAlternate: isAlternateMode,
+                    alternateReason: alternateReason || null,
                 },
                 task: {
                     id: assignedTask.id,
@@ -418,70 +428,68 @@ const createCheckIn = async (req, res) => {
  */
 const getCheckIns = async (req, res) => {
     try {
-        const currentUser = req.user;
-
         const {
-            from,
-            to,
-            role,
-            search,
-            siteId,
-            page = "1",
-            limit = "10",
+            page = 1,
+            limit = 10,
+            search = "",
+            role = "",
+            from = "",
+            to = "",
+            siteId = "",
+            userId = "",
         } = req.query;
+
+        const pageNumber = Math.max(1, parseInt(page, 10) || 1);
+        const limitNumber = Math.max(1, parseInt(limit, 10) || 10);
+        const skip = (pageNumber - 1) * limitNumber;
 
         const where = {};
 
-        if (currentUser.role === "SUPERVISOR") {
-            where.userId = currentUser.userId;
-        }
-
         if (siteId) {
-            const site = await prisma.site.findUnique({
-                where: { id: siteId },
-                select: { id: true },
-            });
-
-            if (!site) {
-                return res.status(404).json({
-                    success: false,
-                    message: "Site not found",
-                });
-            }
-
             where.siteId = siteId;
         }
 
-        const pageNumber = Math.max(parseInt(page, 10) || 1, 1);
-        const limitNumber = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100);
-        const skip = (pageNumber - 1) * limitNumber;
-
-        if (role) {
-            const allowedRoles = ["SUPER_ADMIN", "SUPERVISOR", "FIELD_STAFF"];
-            if (!allowedRoles.includes(role)) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid user role",
-                });
-            }
-            where.user = { role: role };
+        if (userId) {
+            where.userId = userId;
         }
 
-        if (search && search.trim()) {
-            const searchValue = search.trim();
+        if (role) {
+            where.user = {
+                role: role,
+            };
+        }
+
+        if (search) {
             where.OR = [
-                { user: { name: { contains: searchValue, mode: "insensitive" } } },
-                { user: { email: { contains: searchValue, mode: "insensitive" } } },
-                { site: { name: { contains: searchValue, mode: "insensitive" } } },
-                { site: { siteCode: { contains: searchValue, mode: "insensitive" } } },
-                { site: { city: { contains: searchValue, mode: "insensitive" } } },
+                {
+                    user: {
+                        name: {
+                            contains: search,
+                            mode: "insensitive",
+                        },
+                    },
+                },
+                {
+                    site: {
+                        name: {
+                            contains: search,
+                            mode: "insensitive",
+                        },
+                    },
+                },
             ];
         }
 
         if (from || to) {
             where.checkInAt = {};
-            if (from) where.checkInAt.gte = new Date(`${from}T00:00:00.000Z`);
-            if (to) where.checkInAt.lte = new Date(`${to}T23:59:59.999Z`);
+            if (from) {
+                where.checkInAt.gte = new Date(from);
+            }
+            if (to) {
+                const toDate = new Date(to);
+                toDate.setHours(23, 59, 59, 999);
+                where.checkInAt.lte = toDate;
+            }
         }
 
         const total = await prisma.checkInOut.count({ where });
@@ -508,6 +516,8 @@ const getCheckIns = async (req, res) => {
                         city: true,
                         state: true,
                         address: true,
+                        latitude: true,
+                        longitude: true,
                     },
                 },
             },
@@ -516,7 +526,7 @@ const getCheckIns = async (req, res) => {
 
         const totalPages = Math.ceil(total / limitNumber);
 
-        // Enrich each check-in strictly with Supervisor Selfie from [SITE_EVIDENCE]
+        // Enrich check-ins with selfie photos and alternate check-in notes
         const enrichedCheckIns = await Promise.all(
             checkIns.map(async (ci) => {
                 const checkInDate = new Date(ci.checkInAt);
@@ -525,35 +535,30 @@ const getCheckIns = async (req, res) => {
                 const dayEnd = new Date(checkInDate);
                 dayEnd.setHours(23, 59, 59, 999);
 
-                // 1. Visit on the same day for this user & site with [SITE_EVIDENCE]
+                // 1. Visit on the same day for this user & site
                 let visit = await prisma.visit.findFirst({
                     where: {
                         userId: ci.userId,
                         siteId: ci.siteId,
                         visitAt: { gte: dayStart, lte: dayEnd },
-                        notes: { contains: "[SITE_EVIDENCE]" },
                     },
                     orderBy: { visitAt: "desc" },
                 });
 
-                // 2. If not found, any visit on same day
                 if (!visit) {
                     visit = await prisma.visit.findFirst({
                         where: {
                             userId: ci.userId,
                             siteId: ci.siteId,
-                            visitAt: { gte: dayStart, lte: dayEnd },
                         },
                         orderBy: { visitAt: "desc" },
                     });
                 }
 
-                // 3. Fallback: closest visit for user & site with [SITE_EVIDENCE]
                 if (!visit || !visit.notes?.includes("[SITE_EVIDENCE]")) {
                     const evVisit = await prisma.visit.findFirst({
                         where: {
                             userId: ci.userId,
-                            siteId: ci.siteId,
                             notes: { contains: "[SITE_EVIDENCE]" },
                         },
                         orderBy: { visitAt: "desc" },
@@ -563,25 +568,49 @@ const getCheckIns = async (req, res) => {
                     }
                 }
 
-                // 4. Fallback: any visit by this user with [SITE_EVIDENCE]
-                if (!visit || !visit.notes?.includes("[SITE_EVIDENCE]")) {
-                    const anyEvVisit = await prisma.visit.findFirst({
+                const selfie = extractSelfieFromVisit(visit);
+
+                // Check if alternate check-in note is present in visit or any visit around that check-in date
+                let isAlternate = false;
+                let alternateReason = null;
+
+                if (
+                    (visit?.notes && typeof visit.notes === "string" && visit.notes.includes("[ALTERNATE_CHECKIN]")) ||
+                    (visit?.reportType && typeof visit.reportType === "string" && visit.reportType.includes("Alternate"))
+                ) {
+                    isAlternate = true;
+                    const match = visit?.notes?.match(/\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/);
+                    alternateReason = match ? match[1].trim() : "Rain / Weather Emergency";
+                }
+
+                if (!isAlternate) {
+                    const twentyFourHoursBefore = new Date(checkInDate.getTime() - 24 * 60 * 60 * 1000);
+                    const twentyFourHoursAfter = new Date(checkInDate.getTime() + 24 * 60 * 60 * 1000);
+                    const anyAlt = await prisma.visit.findFirst({
                         where: {
                             userId: ci.userId,
-                            notes: { contains: "[SITE_EVIDENCE]" },
+                            siteId: ci.siteId,
+                            OR: [
+                                { notes: { contains: "[ALTERNATE_CHECKIN]" } },
+                                { reportType: { contains: "Alternate" } },
+                            ],
+                            visitAt: { gte: twentyFourHoursBefore, lte: twentyFourHoursAfter },
                         },
                         orderBy: { visitAt: "desc" },
                     });
-                    if (anyEvVisit) {
-                        visit = anyEvVisit;
+
+                    if (anyAlt) {
+                        isAlternate = true;
+                        const match = anyAlt.notes?.match(/\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/);
+                        alternateReason = match ? match[1].trim() : "Rain / Weather Emergency";
                     }
                 }
-
-                const selfie = extractSelfieFromVisit(visit);
 
                 return {
                     ...ci,
                     checkInPhotoUrl: selfie,
+                    isAlternate,
+                    alternateReason,
                 };
             })
         );
@@ -690,7 +719,8 @@ const checkOut = async (req, res) => {
 
             const a =
                 Math.sin(deltaLat / 2) ** 2 +
-                Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
+                Math.cos(lat1) * Math.cos(lat2) *
+                Math.sin(deltaLon / 2) ** 2;
             const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
             distanceTravelled = Number((earthRadiusKm * c).toFixed(3));
@@ -721,6 +751,8 @@ const checkOut = async (req, res) => {
                         siteCode: true,
                         city: true,
                         state: true,
+                        latitude: true,
+                        longitude: true,
                     },
                 },
             },
@@ -824,12 +856,49 @@ const getCheckInById = async (req, res) => {
 
         const selfie = extractSelfieFromVisit(visit);
 
+        let isAlternate = false;
+        let alternateReason = null;
+        if (
+            (visit?.notes && typeof visit.notes === "string" && visit.notes.includes("[ALTERNATE_CHECKIN]")) ||
+            (visit?.reportType && typeof visit.reportType === "string" && visit.reportType.includes("Alternate"))
+        ) {
+            const match = visit?.notes?.match(/\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/);
+            isAlternate = true;
+            alternateReason = match ? match[1].trim() : "Rain / Weather Emergency";
+        }
+
+        if (!isAlternate) {
+            const checkInDate = new Date(checkIn.checkInAt);
+            const twentyFourHoursBefore = new Date(checkInDate.getTime() - 24 * 60 * 60 * 1000);
+            const twentyFourHoursAfter = new Date(checkInDate.getTime() + 24 * 60 * 60 * 1000);
+            const anyAlt = await prisma.visit.findFirst({
+                where: {
+                    userId: checkIn.userId,
+                    siteId: checkIn.siteId,
+                    OR: [
+                        { notes: { contains: "[ALTERNATE_CHECKIN]" } },
+                        { reportType: { contains: "Alternate" } },
+                    ],
+                    visitAt: { gte: twentyFourHoursBefore, lte: twentyFourHoursAfter },
+                },
+                orderBy: { visitAt: "desc" },
+            });
+
+            if (anyAlt) {
+                isAlternate = true;
+                const match = anyAlt.notes?.match(/\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/);
+                alternateReason = match ? match[1].trim() : "Rain / Weather Emergency";
+            }
+        }
+
         return res.status(200).json({
             success: true,
             data: {
                 checkIn: {
                     ...checkIn,
                     checkInPhotoUrl: selfie,
+                    isAlternate,
+                    alternateReason,
                 },
             },
         });
