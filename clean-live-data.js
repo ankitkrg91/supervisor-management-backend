@@ -8,7 +8,6 @@ async function cleanLiveData() {
     console.log("==================================================");
 
     try {
-        // Verify Super Admin exists before deleting anything
         const superAdmins = await prisma.user.findMany({
             where: { role: "SUPER_ADMIN" },
             select: { id: true, email: true, name: true, role: true }
@@ -27,42 +26,33 @@ async function cleanLiveData() {
         console.log("\nStarting data cleanup in transaction...\n");
 
         await prisma.$transaction(async (tx) => {
-            // 1. Audit Answers
             const deletedAnswers = await tx.auditAnswer.deleteMany({});
             console.log(`🗑️  Deleted Audit Answers: ${deletedAnswers.count}`);
 
-            // 2. Audit Submissions
             const deletedSubmissions = await tx.auditSubmission.deleteMany({});
             console.log(`🗑️  Deleted Audit Submissions: ${deletedSubmissions.count}`);
 
-            // 3. Location Logs
             const deletedLocationLogs = await tx.locationLog.deleteMany({});
             console.log(`🗑️  Deleted Location Logs: ${deletedLocationLogs.count}`);
 
-            // 4. Tasks
             const deletedTasks = await tx.task.deleteMany({});
             console.log(`🗑️  Deleted Tasks: ${deletedTasks.count}`);
 
-            // 5. Campaigns
             const deletedCampaigns = await tx.campaign.deleteMany({});
             console.log(`🗑️  Deleted Campaigns: ${deletedCampaigns.count}`);
 
-            // 6. Check Ins / Outs (Attendance)
             const deletedCheckIns = await tx.checkInOut.deleteMany({});
             console.log(`🗑️  Deleted Check Ins / Outs: ${deletedCheckIns.count}`);
 
-            // 7. Visits
             const deletedVisits = await tx.visit.deleteMany({});
             console.log(`🗑️  Deleted Visits: ${deletedVisits.count}`);
 
-            // 8. Unlink site from remaining Super Admins before deleting sites
             const unlinkedAdmins = await tx.user.updateMany({
                 where: { role: "SUPER_ADMIN" },
                 data: { siteId: null }
             });
             console.log(`🔗 Unlinked site reference from Super Admin(s): ${unlinkedAdmins.count}`);
 
-            // 9. Delete all non-admin users (Supervisors, Field Staff, etc.)
             const deletedUsers = await tx.user.deleteMany({
                 where: {
                     role: { not: "SUPER_ADMIN" }
@@ -70,7 +60,6 @@ async function cleanLiveData() {
             });
             console.log(`🗑️  Deleted Users (Supervisors & Field Staff): ${deletedUsers.count}`);
 
-            // 10. Delete Sites
             const deletedSites = await tx.site.deleteMany({});
             console.log(`🗑️  Deleted Sites: ${deletedSites.count}`);
         });
