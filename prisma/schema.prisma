@@ -88,16 +88,19 @@ model User {
 }
 
 model Site {
-  id        String     @id @default(uuid())
-  name      String
-  siteCode  String     @unique
-  address   String?
-  city      String?
-  state     String?
-  pincode   String?
-  latitude  Float?
-  longitude Float?
-  status    SiteStatus @default(ACTIVE)
+  id          String     @id @default(uuid())
+  name        String
+  clientName  String?
+  clientPhone String?
+  clientEmail String?
+  siteCode    String     @unique
+  address     String?
+  city        String?
+  state       String?
+  pincode     String?
+  latitude    Float?
+  longitude   Float?
+  status      SiteStatus @default(ACTIVE)
 
   users    User[]
   checkIns CheckInOut[]

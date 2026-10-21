@@ -1,246 +1,193 @@
 import bcrypt from "bcrypt";
-
+import jwt from "jsonwebtoken";
 import prisma from "../config/prisma.js";
+import { generateAccessToken, generateRefreshToken } from "../services/authService.js";
+import { sendSuccess, sendError } from "../utils/response.js";
 
-import {
-    generateAccessToken,
-    generateRefreshToken,
-    verifyRefreshToken,
-} from "../services/authService.js";
+/**
+ * Helper: Find user by Email, Employee ID prefix, Phone, or Name
+ */
+const findUserByIdentifier = async (rawIdentifier) => {
+    const cleanId = String(rawIdentifier || "").trim();
+    const lowerId = cleanId.toLowerCase();
 
-const login = async (req, res) => {
+    return prisma.user.findFirst({
+        where: {
+            OR: [
+                { email: lowerId },
+                { email: { startsWith: `${lowerId}@` } },
+                { phone: cleanId },
+                { name: { equals: cleanId, mode: "insensitive" } },
+            ],
+        },
+        include: {
+            site: {
+                select: {
+                    id: true,
+                    name: true,
+                    siteCode: true,
+                    address: true,
+                    city: true,
+                    state: true,
+                    pincode: true,
+                    latitude: true,
+                    longitude: true,
+                },
+            },
+        },
+    });
+};
+
+export const login = async (req, res, next) => {
     try {
-        const { email, password } = req.body;
+        const identifier = req.body.email || req.body.empId || req.body.identifier;
+        const { password } = req.body;
 
-        if (!email || !password) {
-            return res.status(400).json({
-                success: false,
-                message: "Email and password are required",
-            });
+        if (!identifier || !password) {
+            return sendError(res, 400, "Email/ID and password are required");
         }
 
-        const user = await prisma.user.findUnique({
-            where: {
-                email: email.toLowerCase().trim(),
-            },
-        });
+        const user = await findUserByIdentifier(identifier);
 
         if (!user) {
-            return res.status(401).json({
-                success: false,
-                message: "Invalid email or password",
-            });
+            return sendError(res, 401, "Invalid email/ID or password");
         }
 
-        if (user.status !== "ACTIVE") {
-            return res.status(403).json({
-                success: false,
-                message: "User account is inactive",
-            });
+        if (user.status === "INACTIVE") {
+            return sendError(res, 403, "Your account has been deactivated");
         }
 
-        // This web portal is only for Super Admin.
         if (user.role !== "SUPER_ADMIN") {
-            return res.status(403).json({
-                success: false,
-                message: "Only Super Admin can access this portal",
-            });
+            return sendError(res, 403, "Access denied. Only Super Admin can login to this portal.");
         }
 
-        const passwordMatch = await bcrypt.compare(
-            password,
-            user.passwordHash
-        );
-
-        if (!passwordMatch) {
-            return res.status(401).json({
-                success: false,
-                message: "Invalid email or password",
-            });
+        const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+        if (!isPasswordValid) {
+            return sendError(res, 401, "Invalid email/ID or password");
         }
 
-        const accessToken = generateAccessToken(user);
-        const refreshToken = generateRefreshToken(user);
+        const tokenPayload = {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            name: user.name,
+        };
 
-        return res.status(200).json({
-            success: true,
-            message: "Login successful",
-            data: {
-                user: {
-                    id: user.id,
-                    name: user.name,
-                    email: user.email,
-                    role: user.role,
-                    status: user.status,
-                },
-                accessToken,
-                refreshToken,
+        const accessToken = generateAccessToken(tokenPayload);
+        const refreshToken = generateRefreshToken(tokenPayload);
+
+        return sendSuccess(res, 200, "Login successful", {
+            accessToken,
+            refreshToken,
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                phone: user.phone,
+                role: user.role,
+                siteId: user.siteId,
+                site: user.site || null,
             },
         });
     } catch (error) {
-        console.error("Login error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error",
-        });
+        next(error);
     }
 };
 
-const supervisorLogin = async (req, res) => {
+export const supervisorLogin = async (req, res, next) => {
     try {
-        const { email, password } = req.body;
+        const identifier = req.body.email || req.body.empId || req.body.identifier || req.body.username;
+        const { password } = req.body;
 
-        if (!email || !password) {
-            return res.status(400).json({
-                success: false,
-                message: "Email and password are required",
-            });
+        if (!identifier || !password) {
+            return sendError(res, 400, "Employee ID / Email and password are required");
         }
 
-        const user = await prisma.user.findUnique({
-            where: {
-                email: email.toLowerCase().trim(),
-            },
-        });
+        const user = await findUserByIdentifier(identifier);
 
         if (!user) {
-            return res.status(401).json({
-                success: false,
-                message: "Invalid email or password",
-            });
+            return sendError(res, 401, "Invalid Employee ID / Email or password");
         }
 
-        if (user.status !== "ACTIVE") {
-            return res.status(403).json({
-                success: false,
-                message: "User account is inactive",
-            });
+        if (user.status === "INACTIVE") {
+            return sendError(res, 403, "Your account has been deactivated. Please contact admin.");
         }
 
-        // This endpoint is only for Supervisors.
-        if (user.role !== "SUPERVISOR") {
-            return res.status(403).json({
-                success: false,
-                message: "Only Supervisors can use this login",
-            });
+        // Allow SUPERVISOR, FIELD_STAFF, and SUPER_ADMIN to sign in to the index.html web app
+        if (!["SUPERVISOR", "FIELD_STAFF", "SUPER_ADMIN"].includes(user.role)) {
+            return sendError(res, 403, "Access denied for this role.");
         }
 
-        const passwordMatch = await bcrypt.compare(
-            password,
-            user.passwordHash
-        );
-
-        if (!passwordMatch) {
-            return res.status(401).json({
-                success: false,
-                message: "Invalid email or password",
-            });
+        const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+        if (!isPasswordValid) {
+            return sendError(res, 401, "Invalid Employee ID / Email or password");
         }
 
-        const accessToken = generateAccessToken(user);
-        const refreshToken = generateRefreshToken(user);
+        const tokenPayload = {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            name: user.name,
+        };
 
-        return res.status(200).json({
-            success: true,
-            message: "Supervisor login successful",
-            data: {
-                user: {
-                    id: user.id,
-                    name: user.name,
-                    email: user.email,
-                    role: user.role,
-                    status: user.status,
-                    siteId: user.siteId,
-                },
-                accessToken,
-                refreshToken,
+        const accessToken = generateAccessToken(tokenPayload);
+        const refreshToken = generateRefreshToken(tokenPayload);
+
+        return sendSuccess(res, 200, "Login successful", {
+            accessToken,
+            refreshToken,
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                phone: user.phone || "",
+                role: user.role,
+                siteId: user.siteId,
+                site: user.site || null,
             },
         });
     } catch (error) {
-        console.error("Supervisor login error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error",
-        });
+        next(error);
     }
 };
 
-const refreshAccessToken = async (req, res) => {
+export const refreshAccessToken = async (req, res, next) => {
     try {
         const { refreshToken } = req.body;
-
         if (!refreshToken) {
-            return res.status(401).json({
-                success: false,
-                message: "Refresh token is required",
-            });
+            return sendError(res, 400, "Refresh token is required");
         }
 
-        const decoded = verifyRefreshToken(refreshToken);
-
+        const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
         const user = await prisma.user.findUnique({
-            where: {
-                id: decoded.userId,
-            },
-            select: {
-                id: true,
-                name: true,
-                email: true,
-                role: true,
-                status: true,
-            },
+            where: { id: decoded.id },
         });
 
-        if (!user) {
-            return res.status(401).json({
-                success: false,
-                message: "User not found",
-            });
+        if (!user || user.status === "INACTIVE") {
+            return sendError(res, 401, "Invalid user or inactive account");
         }
 
-        if (user.status !== "ACTIVE") {
-            return res.status(403).json({
-                success: false,
-                message: "User account is inactive",
-            });
-        }
+        const tokenPayload = {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            name: user.name,
+        };
 
-        // Portal remains Super Admin only.
-        if (user.role !== "SUPER_ADMIN") {
-            return res.status(403).json({
-                success: false,
-                message: "Only Super Admin can access this portal",
-            });
-        }
+        const newAccessToken = generateAccessToken(tokenPayload);
 
-        const accessToken = generateAccessToken(user);
-
-        return res.status(200).json({
-            success: true,
-            message: "Access token refreshed",
-            data: {
-                accessToken,
-                user,
-            },
+        return sendSuccess(res, 200, "Token refreshed", {
+            accessToken: newAccessToken,
         });
     } catch (error) {
-        console.error("Refresh token error:", error);
-
-        return res.status(401).json({
-            success: false,
-            message: "Invalid or expired refresh token",
-        });
+        return sendError(res, 401, "Invalid or expired refresh token");
     }
 };
 
-const getMe = async (req, res) => {
+export const getMe = async (req, res, next) => {
     try {
         const user = await prisma.user.findUnique({
-            where: {
-                id: req.user.userId,
-            },
+            where: { id: req.user.userId },
             select: {
                 id: true,
                 name: true,
@@ -249,155 +196,93 @@ const getMe = async (req, res) => {
                 role: true,
                 status: true,
                 siteId: true,
+                site: {
+                    select: {
+                        id: true,
+                        name: true,
+                        siteCode: true,
+                        address: true,
+                        city: true,
+                        state: true,
+                        pincode: true,
+                        latitude: true,
+                        longitude: true,
+                    },
+                },
                 createdAt: true,
-                updatedAt: true,
             },
         });
 
         if (!user) {
-            return res.status(404).json({
-                success: false,
-                message: "User not found",
-            });
+            return sendError(res, 404, "User not found");
         }
 
-        return res.status(200).json({
-            success: true,
-            data: {
-                user,
-            },
-        });
+        return sendSuccess(res, 200, "User profile fetched", { user });
     } catch (error) {
-        console.error("Get current user error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error",
-        });
+        next(error);
     }
 };
-
-// ============================================================
-// CHANGE PASSWORD
-// ============================================================
-
-const changePassword = async (req, res) => {
+export const changePassword = async (req, res, next) => {
     try {
-        const { currentPassword, newPassword } = req.body;
+        const { currentPassword, newPassword, confirmPassword } = req.body;
 
         if (!currentPassword || !newPassword) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "Current password and new password are required",
-            });
-        }
-
-        if (typeof newPassword !== "string") {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid new password",
-            });
+            return sendError(
+                res,
+                400,
+                "Current password and new password are required"
+            );
         }
 
         if (newPassword.length < 8) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "New password must contain at least 8 characters",
-            });
+            return sendError(
+                res,
+                400,
+                "New password must be at least 8 characters long"
+            );
         }
 
-        if (newPassword === currentPassword) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    "New password must be different from your current password",
-            });
+        if (
+            confirmPassword !== undefined &&
+            newPassword !== confirmPassword
+        ) {
+            return sendError(
+                res,
+                400,
+                "New password and confirm password do not match"
+            );
         }
 
         const user = await prisma.user.findUnique({
-            where: {
-                id: req.user.userId,
-            },
+            where: { id: req.user.id },
             select: {
                 id: true,
-                role: true,
-                status: true,
                 passwordHash: true,
             },
         });
 
         if (!user) {
-            return res.status(404).json({
-                success: false,
-                message: "User not found",
-            });
+            return sendError(res, 404, "User not found");
         }
 
-        if (
-            user.role !== "SUPER_ADMIN" &&
-            user.role !== "SUPERVISOR"
-        ) {
-            return res.status(403).json({
-                success: false,
-                message:
-                    "You do not have permission to change this password",
-            });
-        }
-
-        if (user.status !== "ACTIVE") {
-            return res.status(403).json({
-                success: false,
-                message: "User account is inactive",
-            });
-        }
-
-        const passwordMatches = await bcrypt.compare(
+        const isPasswordValid = await bcrypt.compare(
             currentPassword,
             user.passwordHash
         );
 
-        if (!passwordMatches) {
-            return res.status(401).json({
-                success: false,
-                message: "Current password is incorrect",
-            });
+        if (!isPasswordValid) {
+            return sendError(res, 401, "Current password is incorrect");
         }
 
-        const newPasswordHash = await bcrypt.hash(
-            newPassword,
-            12
-        );
+        const passwordHash = await bcrypt.hash(newPassword, 10);
 
         await prisma.user.update({
-            where: {
-                id: user.id,
-            },
-            data: {
-                passwordHash: newPasswordHash,
-            },
+            where: { id: user.id },
+            data: { passwordHash },
         });
 
-        return res.status(200).json({
-            success: true,
-            message:
-                "Password changed successfully",
-        });
+        return sendSuccess(res, 200, "Password changed successfully");
     } catch (error) {
-        console.error("Change password error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Failed to change password",
-        });
+        next(error);
     }
-};
-
-export {
-    login,
-    supervisorLogin,
-    refreshAccessToken,
-    getMe,
-    changePassword,
 };

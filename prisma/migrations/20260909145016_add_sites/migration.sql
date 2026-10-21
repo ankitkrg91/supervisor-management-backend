@@ -27,3 +27,16 @@ CREATE INDEX "sites_status_idx" ON "sites"("status");
 
 -- CreateIndex
 CREATE INDEX "sites_city_idx" ON "sites"("city");
+
+ALTER TABLE "sites"
+ADD COLUMN IF NOT EXISTS "clientName" TEXT;
+
+ALTER TABLE "sites"
+ADD COLUMN IF NOT EXISTS "clientPhone" TEXT;
+
+ALTER TABLE "sites"
+ADD COLUMN IF NOT EXISTS "clientEmail" TEXT;
+
+UPDATE "sites"
+SET "clientName" = "name"
+WHERE "clientName" IS NULL;

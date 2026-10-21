@@ -55,6 +55,13 @@ const createCheckIn = async (req, res) => {
             alternateReason,
         } = req.body;
 
+        if (typeof photoUrl !== "string" || !photoUrl.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: "A check-in selfie is required",
+            });
+        }
+
         if (!siteId) {
             return res.status(400).json({
                 success: false,
@@ -163,9 +170,17 @@ const createCheckIn = async (req, res) => {
                 ? Number(longitude)
                 : null;
 
+        if (parsedLatitude === null || parsedLongitude === null) {
+            return res.status(400).json({
+                success: false,
+                message: "Current GPS location is required for check-in",
+            });
+        }
+
         if (
-            parsedLatitude !== null &&
-            (Number.isNaN(parsedLatitude) || parsedLatitude < -90 || parsedLatitude > 90)
+            Number.isNaN(parsedLatitude) ||
+            parsedLatitude < -90 ||
+            parsedLatitude > 90
         ) {
             return res.status(400).json({
                 success: false,
@@ -174,8 +189,9 @@ const createCheckIn = async (req, res) => {
         }
 
         if (
-            parsedLongitude !== null &&
-            (Number.isNaN(parsedLongitude) || parsedLongitude < -180 || parsedLongitude > 180)
+            Number.isNaN(parsedLongitude) ||
+            parsedLongitude < -180 ||
+            parsedLongitude > 180
         ) {
             return res.status(400).json({
                 success: false,
@@ -183,7 +199,28 @@ const createCheckIn = async (req, res) => {
             });
         }
 
-        // 100-Meter Geofence check (Bypassed if Rain/Emergency Alternate Mode)
+        // Emergency mode must be explicitly requested with a meaningful reason.
+        // A reason alone must never bypass the geofence.
+        const isAlternateMode = isAlternate === true;
+        const normalizedAlternateReason =
+            typeof alternateReason === "string" ? alternateReason.trim() : "";
+
+        if (isAlternateMode && normalizedAlternateReason.length < 5) {
+            return res.status(400).json({
+                success: false,
+                message: "Emergency check-in reason must be at least 5 characters",
+            });
+        }
+
+        if (isAlternateMode && normalizedAlternateReason.length > 500) {
+            return res.status(400).json({
+                success: false,
+                message: "Emergency check-in reason must not exceed 500 characters",
+            });
+        }
+
+        // Normal check-in requires the supervisor to be within 200m of the selected site.
+        // Emergency mode bypasses only the distance limit; GPS is still recorded.
         const calculateDistanceMeters = (lat1, lon1, lat2, lon2) => {
             const R = 6371e3;
             const phi1 = (lat1 * Math.PI) / 180;
@@ -198,46 +235,39 @@ const createCheckIn = async (req, res) => {
             return R * c;
         };
 
-        const isAlternateMode = Boolean(isAlternate) || Boolean(alternateReason);
         let calculatedDistance = null;
-
-        if (
+        const hasSiteCoordinates =
             site.latitude !== null &&
             site.latitude !== undefined &&
             site.longitude !== null &&
-            site.longitude !== undefined &&
-            parsedLatitude !== null &&
-            parsedLongitude !== null
-        ) {
+            site.longitude !== undefined;
+
+        if (hasSiteCoordinates) {
             calculatedDistance = calculateDistanceMeters(
                 parsedLatitude,
                 parsedLongitude,
-                site.latitude,
-                site.longitude
+                Number(site.latitude),
+                Number(site.longitude)
             );
 
-            // Enforce 100m geofence ONLY IF NOT in Alternate/Rain mode
-            if (!isAlternateMode && calculatedDistance > 100) {
+            if (!isAlternateMode && calculatedDistance > 200) {
                 return res.status(400).json({
                     success: false,
-                    message: `Check-in is only allowed within 100 meters of the site. You are currently ${Math.round(calculatedDistance)}m away from ${site.name}. Use Rain/Emergency Check-In if unable to reach site.`,
+                    message: `Check-in is only allowed within 200 meters of the site. You are currently ${Math.round(calculatedDistance)}m away from ${site.name}. Use Emergency Check-In only for a genuine emergency.`,
                     data: {
                         distanceMeters: Math.round(calculatedDistance),
-                        allowedRadiusMeters: 100,
+                        allowedRadiusMeters: 200,
                         siteName: site.name,
                     },
                 });
             }
-        } else if (
-            (site.latitude === null || site.longitude === null) &&
-            parsedLatitude !== null &&
-            parsedLongitude !== null
-        ) {
-            await prisma.site.update({
-                where: { id: siteId },
+        } else if (!isAlternateMode) {
+            return res.status(400).json({
+                success: false,
+                message: "This site's GPS coordinates are not configured. Ask the Admin to update the site location, or use Emergency Check-In only if there is a genuine emergency.",
                 data: {
-                    latitude: parsedLatitude,
-                    longitude: parsedLongitude,
+                    allowedRadiusMeters: 200,
+                    siteName: site.name,
                 },
             });
         }
@@ -308,8 +338,8 @@ const createCheckIn = async (req, res) => {
             });
 
             const reasonTag = isAlternateMode
-                ? `[ALTERNATE_CHECKIN]: ${alternateReason || "Rain / Weather Emergency"} (Geofence Bypassed)`
-                : `[STANDARD_CHECKIN]: Verified within 100m`;
+                ? `[ALTERNATE_CHECKIN]: ${normalizedAlternateReason} (Geofence Bypassed)`
+                : `[STANDARD_CHECKIN]: Verified within 200m`;
 
             const evJson = JSON.stringify({
                 selfie: photoUrl || "",
@@ -333,6 +363,9 @@ const createCheckIn = async (req, res) => {
                         photoUrl: existingVisit.photoUrl || photoUrl || null,
                         latitude: parsedLatitude ?? existingVisit.latitude,
                         longitude: parsedLongitude ?? existingVisit.longitude,
+                        ...(isAlternateMode && ["Site Check-In", "Alternate Check-In (Rain/Emergency)"].includes(existingVisit.reportType)
+                            ? { reportType: "Alternate Check-In (Rain/Emergency)" }
+                            : {}),
                         notes,
                     },
                 });
@@ -398,7 +431,7 @@ const createCheckIn = async (req, res) => {
                     ...checkIn,
                     checkInPhotoUrl: photoUrl || null,
                     isAlternate: isAlternateMode,
-                    alternateReason: alternateReason || null,
+                    alternateReason: isAlternateMode ? normalizedAlternateReason : null,
                 },
                 task: {
                     id: assignedTask.id,

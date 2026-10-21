@@ -8,6 +8,9 @@ const createSite = async (req, res) => {
         const {
             name,
             siteCode,
+            clientName,
+            clientPhone,
+            clientEmail,
             address,
             city,
             state,
@@ -50,6 +53,15 @@ const createSite = async (req, res) => {
 
                     siteCode:
                         normalizedSiteCode,
+
+                    clientName:
+                        clientName?.trim() || null,
+
+                    clientPhone:
+                        clientPhone?.trim() || null,
+
+                    clientEmail:
+                        clientEmail?.trim() || null,
 
                     address:
                         address?.trim() ||
@@ -154,6 +166,24 @@ const getSites = async (req, res) => {
                     },
                 },
                 {
+                    clientName: {
+                        contains: search.trim(),
+                        mode: "insensitive",
+                    },
+                },
+                {
+                    clientPhone: {
+                        contains: search.trim(),
+                        mode: "insensitive",
+                    },
+                },
+                {
+                    clientEmail: {
+                        contains: search.trim(),
+                        mode: "insensitive",
+                    },
+                },
+                {
                     city: {
                         contains:
                             search.trim(),
@@ -178,6 +208,9 @@ const getSites = async (req, res) => {
                     id: true,
                     name: true,
                     siteCode: true,
+                    clientName: true,
+                    clientPhone: true,
+                    clientEmail: true,
                     address: true,
                     city: true,
                     state: true,
@@ -225,6 +258,9 @@ const updateSite = async (req, res) => {
         const {
             name,
             siteCode,
+            clientName,
+            clientPhone,
+            clientEmail,
             address,
             city,
             state,
@@ -312,6 +348,18 @@ const updateSite = async (req, res) => {
                             siteCode
                                 .trim()
                                 .toUpperCase(),
+                    }),
+
+                    ...(clientName !== undefined && {
+                        clientName: clientName?.trim() || null,
+                    }),
+
+                    ...(clientPhone !== undefined && {
+                        clientPhone: clientPhone?.trim() || null,
+                    }),
+
+                    ...(clientEmail !== undefined && {
+                        clientEmail: clientEmail?.trim() || null,
                     }),
 
                     ...(address !==
