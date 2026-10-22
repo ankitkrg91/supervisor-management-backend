@@ -1,39 +1,19 @@
 import express from "express";
 
 import {
-    createAuditTemplate,
     getAuditTemplates,
-    updateAuditTemplate,
-
-    addAuditQuestion,
-    updateAuditQuestion,
-    deleteAuditQuestion,
-
     getAuditTemplateById,
-
     getAuditChecklist,
-    createChecklistQuestion,
-    updateChecklistQuestion,
-    deleteChecklistQuestion,
-
     submitAudit,
     getAuditSubmission,
 } from "../controllers/auditController.js";
 
-
-
 import authenticate from "../middleware/authMiddleware.js";
-
 import authorize from "../middleware/roleMiddleware.js";
-
 
 const router = express.Router();
 
-
-/* =========================================================
-   ADMIN - AUDIT TEMPLATE MANAGEMENT
-========================================================= */
-
+// Read-only template list
 router.get(
     "/",
     authenticate,
@@ -41,123 +21,24 @@ router.get(
     getAuditTemplates
 );
 
-
-router.post(
-    "/",
-    authenticate,
-    authorize("SUPER_ADMIN"),
-    createAuditTemplate
-);
-
-
-router.put(
-    "/:templateId",
-    authenticate,
-    authorize("SUPER_ADMIN"),
-    updateAuditTemplate
-);
-
-
-/* =========================================================
-   SUPERVISOR + ADMIN
-   GET AUDIT CHECKLIST
-
-   IMPORTANT:
-   This route MUST come before /:templateId
-========================================================= */
-
+// Keep checklist read API for compatibility.
+// The delivered index.html does not dynamically load questions from this API.
 router.get(
     "/checklist",
     authenticate,
-    authorize(
-        "SUPER_ADMIN",
-        "SUPERVISOR"
-    ),
+    authorize("SUPER_ADMIN", "SUPERVISOR"),
     getAuditChecklist
 );
 
-
-
-
-
-/* =========================================================
-   ADMIN + SUPERVISOR
-   GET SINGLE TEMPLATE
-========================================================= */
-
+// Keep existing template read API
 router.get(
     "/:templateId",
     authenticate,
-    authorize(
-        "SUPER_ADMIN",
-        "SUPERVISOR"
-    ),
+    authorize("SUPER_ADMIN", "SUPERVISOR"),
     getAuditTemplateById
 );
 
-
-/* =========================================================
-   ADMIN - CHECKLIST QUESTIONS
-========================================================= */
-
-router.post(
-    "/checklist/questions",
-    authenticate,
-    authorize("SUPER_ADMIN"),
-    createChecklistQuestion
-);
-
-
-router.put(
-    "/checklist/questions/:questionId",
-    authenticate,
-    authorize("SUPER_ADMIN"),
-    updateChecklistQuestion
-);
-
-
-router.delete(
-    "/checklist/questions/:questionId",
-    authenticate,
-    authorize("SUPER_ADMIN"),
-    deleteChecklistQuestion
-);
-
-
-/* =========================================================
-   ADMIN - AUDIT QUESTIONS
-========================================================= */
-
-router.post(
-    "/:templateId/questions",
-    authenticate,
-    authorize("SUPER_ADMIN"),
-    addAuditQuestion
-);
-
-
-router.put(
-    "/:templateId/questions/:questionId",
-    authenticate,
-    authorize("SUPER_ADMIN"),
-    updateAuditQuestion
-);
-
-
-router.delete(
-    "/:templateId/questions/:questionId",
-    authenticate,
-    authorize("SUPER_ADMIN"),
-    deleteAuditQuestion
-);
-
-
-
-
-/* =========================================================
-   SUPERVISOR - SUBMIT AUDIT
-========================================================= */
-
+// Preserve audit submission
 router.post(
     "/visits/:visitId/submit",
     authenticate,
@@ -165,24 +46,12 @@ router.post(
     submitAudit
 );
 
-
-/* =========================================================
-   ADMIN + SUPERVISOR
-   GET SUBMISSION
-========================================================= */
-
+// Preserve existing submission/history access
 router.get(
     "/visits/:visitId/submission",
     authenticate,
-    authorize(
-        "SUPER_ADMIN",
-        "SUPERVISOR"
-    ),
+    authorize("SUPER_ADMIN", "SUPERVISOR"),
     getAuditSubmission
 );
-
-
-
-
 
 export default router;
