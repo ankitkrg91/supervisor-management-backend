@@ -37,6 +37,8 @@ enum VisitStatus {
 enum AuditQuestionType {
   YES_NO
   TEXT
+  NUMBER
+  POPUP
 }
 
 enum TaskStatus {
@@ -269,8 +271,12 @@ model AuditQuestion {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  section String?
+  config  Json?
+
   @@index([templateId])
   @@index([questionNo])
+  @@index([section])
   @@map("audit_questions")
 }
 

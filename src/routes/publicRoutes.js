@@ -60,6 +60,34 @@ const parseSubmittedAnswers = (visit) => {
             };
         });
     }
+
+    /* Fallback: reports pushed by the supervisor mobile app (VSF) keep their answers inside
+       Visit.notes as a single line:  [VINICA_VSF_REPORT]: {json}  */
+    const m = typeof visit?.notes === "string" ? visit.notes.match(/\[VINICA_VSF_REPORT\]:\s*(.+)/) : null;
+    if (m) {
+        try {
+            const report = JSON.parse(m[1]);
+            const list = Array.isArray(report.answers) ? report.answers : [];
+            return list.map((a, idx) => {
+                const raw = String(a.a ?? "").trim();
+                const isYes = raw.toLowerCase() === "yes";
+                const isNo = raw.toLowerCase() === "no";
+                const extra = [
+                    a.kp ? `Number: ${a.kp}` : "",
+                    a.rm ? `Remark: ${a.rm}` : "",
+                ].filter(Boolean).join(" | ");
+                const base = isYes ? "Yes" : isNo ? "No" : (raw || "-");
+                return {
+                    no: a.n || idx + 1,
+                    text: a.t || `Question #${a.n || idx + 1}`,
+                    ans: extra ? `${base} (${extra})` : base,
+                    booleanValue: isYes ? true : isNo ? false : undefined,
+                    photos: Array.isArray(a.ph) ? a.ph.filter(Boolean) : [],
+                    score: isNo ? "0 / 4" : "4 / 4",
+                };
+            });
+        } catch (_) { /* ignore malformed notes */ }
+    }
     return [];
 };
 
@@ -854,7 +882,28 @@ router.post("/feedback/:visitId", async (req, res) => {
             },
         });
 
-        if (visit) {
+        if (!visit) {
+            return res.status(404).json({
+                success: false,
+                message: "Visit not found",
+            });
+        }
+
+        if (!feedbackData || typeof feedbackData !== "object" || !feedbackData.answers || typeof feedbackData.answers !== "object" || Object.keys(feedbackData.answers).length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Feedback answers are required",
+            });
+        }
+
+        if ((visit.notes || "").includes("[CLIENT_FEEDBACK]:")) {
+            return res.status(409).json({
+                success: false,
+                message: "Feedback has already been submitted for this visit. Thank you!",
+            });
+        }
+
+        {
             const existingNotes = visit.notes || "";
             const feedbackJsonStr = JSON.stringify({
                 submittedAt: new Date().toISOString(),
