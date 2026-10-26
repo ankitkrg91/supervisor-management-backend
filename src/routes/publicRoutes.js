@@ -651,7 +651,7 @@ router.get(["/audit-view/:visitId", "/report/:visitId"], async (req, res) => {
         </section>
 
         <footer class="footer">
-            <p><strong>VINICIA SECURITY SERVICES PVT LTD</strong> • Modern Security Force</p>
+            <p><strong>VINICIA SECURITY SERVICES PVT LTD</strong></p>
             <p>Verified by Mobile GPS & Digital Timestamp. All Rights Reserved.</p>
         </footer>
     </main>
