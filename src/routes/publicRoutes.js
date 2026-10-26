@@ -871,51 +871,61 @@ router.get("/feedback/:visitId", async (req, res) => {
 router.post("/feedback/:visitId", async (req, res) => {
     try {
         const { visitId } = req.params;
-        const feedbackData = req.body;
+        const body = req.body ?? {};
 
-        const visit = await prisma.visit.findFirst({
-            where: {
-                OR: [
-                    { id: visitId },
-                    { notes: { contains: visitId } },
-                ],
-            },
+        // This matches the fields sent by the existing feedback form.
+        const ratingNumber = Number(body.rating);
+        const clientName = typeof body.clientName === "string" ? body.clientName.trim() : "";
+        const clientPhone = typeof body.clientPhone === "string" ? body.clientPhone.trim() : "";
+        const comments = typeof body.comments === "string" ? body.comments.trim() : "";
+
+        if (!Number.isInteger(ratingNumber) || ratingNumber < 1 || ratingNumber > 5) {
+            return res.status(400).json({
+                success: false,
+                message: "Please provide a rating between 1 and 5.",
+            });
+        }
+
+        if (!clientName) {
+            return res.status(400).json({
+                success: false,
+                message: "Client name is required.",
+            });
+        }
+
+        const visit = await prisma.visit.findUnique({
+            where: { id: visitId },
         });
 
         if (!visit) {
             return res.status(404).json({
                 success: false,
-                message: "Visit not found",
+                message: "Visit not found.",
             });
         }
 
-        if (!feedbackData || typeof feedbackData !== "object" || !feedbackData.answers || typeof feedbackData.answers !== "object" || Object.keys(feedbackData.answers).length === 0) {
-            return res.status(400).json({
-                success: false,
-                message: "Feedback answers are required",
-            });
-        }
-
-        if ((visit.notes || "").includes("[CLIENT_FEEDBACK]:")) {
+        const existingNotes = visit.notes || "";
+        if (existingNotes.includes("[CLIENT_FEEDBACK]:")) {
             return res.status(409).json({
                 success: false,
                 message: "Feedback has already been submitted for this visit. Thank you!",
             });
         }
 
-        {
-            const existingNotes = visit.notes || "";
-            const feedbackJsonStr = JSON.stringify({
-                submittedAt: new Date().toISOString(),
-                ...feedbackData,
-            });
-            await prisma.visit.update({
-                where: { id: visit.id },
-                data: {
-                    notes: `${existingNotes}\n[CLIENT_FEEDBACK]: ${feedbackJsonStr}`.trim(),
-                },
-            });
-        }
+        const feedbackJson = {
+            submittedAt: new Date().toISOString(),
+            rating: ratingNumber,
+            clientName,
+            clientPhone,
+            comments,
+        };
+
+        await prisma.visit.update({
+            where: { id: visit.id },
+            data: {
+                notes: `${existingNotes}\n[CLIENT_FEEDBACK]: ${JSON.stringify(feedbackJson)}`.trim(),
+            },
+        });
 
         return res.status(200).json({
             success: true,
@@ -925,7 +935,7 @@ router.post("/feedback/:visitId", async (req, res) => {
         console.error("Public feedback submit error:", error);
         return res.status(500).json({
             success: false,
-            message: "Failed to submit feedback",
+            message: "Failed to submit feedback.",
         });
     }
 });
