@@ -17,12 +17,40 @@ const ALLOWED_STATUSES = [
     "INACTIVE",
 ];
 
+const ALLOWED_DESIGNATIONS = [
+    "BH",
+    "AO-AREA OFFICER",
+    "AO-EXECUTIVE-MSF",
+    "AO-ASSIGNMENT OFFICER",
+    "AO-ASST. MANAGER",
+    "AO-EXECUTIVE-ATM",
+    "AO-EXECUTIVE-MFM",
+    "AO-OPERATION MANAGER",
+    "AO-OPERATION MANAGER-TRG",
+    "AO-TRAINING OFFICER",
+    "AO-OPERATION MANAGER-MFM",
+    "AO-ELECTRICIAN-MST",
+    "AO-SR. EXECUTIVE-MFM",
+    "MFM",
+    "HR-EXECUTIVE",
+];
+
+// Designations are display/job titles, not authentication roles. Accept a
+// custom title entered via the Admin Portal "Other" option, with a safe
+// character set and a maximum length. Login authorization still uses role.
+const isValidDesignation = (value) =>
+    typeof value === "string" &&
+    value.length <= 80 &&
+    value.trim().length > 0 &&
+    !/[\u0000-\u001F\u007F]/.test(value);
+
 const userSelect = {
     id: true,
     name: true,
     email: true,
     phone: true,
     role: true,
+    designation: true,
     status: true,
     siteId: true,
     site: {
@@ -48,8 +76,14 @@ const createUser = async (req, res) => {
             password,
             phone,
             role,
+            designation,
             siteId,
         } = req.body;
+
+        const normalizedDesignation =
+            designation === undefined || designation === null || String(designation).trim() === ""
+                ? null
+                : String(designation).trim();
 
         if (!name || !email || !role) {
             return res.status(400).json({
@@ -62,6 +96,20 @@ const createUser = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: "Invalid user role",
+            });
+        }
+
+        if (normalizedDesignation && !isValidDesignation(normalizedDesignation)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid user designation",
+            });
+        }
+
+        if (normalizedDesignation && role !== "SUPER_ADMIN") {
+            return res.status(400).json({
+                success: false,
+                message: "Admin portal designations must use the Super Admin access role",
             });
         }
 
@@ -157,6 +205,7 @@ const createUser = async (req, res) => {
                 passwordHash,
                 phone: phone?.trim() || null,
                 role,
+                designation: normalizedDesignation,
                 status: "ACTIVE",
                 siteId: validatedSiteId,
             },
@@ -350,6 +399,7 @@ const updateUser = async (req, res) => {
             email,
             phone,
             role,
+            designation,
             siteId,
             status,
         } = req.body;
@@ -441,6 +491,29 @@ const updateUser = async (req, res) => {
             });
         }
 
+        let normalizedDesignation;
+        if (designation !== undefined) {
+            normalizedDesignation =
+                designation === null || String(designation).trim() === ""
+                    ? null
+                    : String(designation).trim();
+
+            if (normalizedDesignation && !isValidDesignation(normalizedDesignation)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid user designation",
+                });
+            }
+
+            const designationRole = role !== undefined ? role : existingUser.role;
+            if (normalizedDesignation && designationRole !== "SUPER_ADMIN") {
+                return res.status(400).json({
+                    success: false,
+                    message: "Admin portal designations must use the Super Admin access role",
+                });
+            }
+        }
+
         // =====================================================
         // STATUS
         // =====================================================
@@ -522,6 +595,14 @@ const updateUser = async (req, res) => {
 
                 ...(role !== undefined && {
                     role,
+                }),
+
+                ...(designation !== undefined && {
+                    designation: normalizedDesignation,
+                }),
+
+                ...(role !== undefined && role !== "SUPER_ADMIN" && designation === undefined && {
+                    designation: null,
                 }),
 
                 ...(role !== undefined &&

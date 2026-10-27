@@ -543,6 +543,7 @@ router.get(["/audit-view/:visitId", "/report/:visitId"], async (req, res) => {
             padding-top: 20px;
         }
         .footer strong { color: #0f172a; }
+        .footer-logo { display: block; width: 180px; max-width: 75%; height: auto; object-fit: contain; margin: 0 auto 10px; background: #fff; border-radius: 4px; }
 
         .modal {
             display: none;
@@ -651,7 +652,9 @@ router.get(["/audit-view/:visitId", "/report/:visitId"], async (req, res) => {
         </section>
 
         <footer class="footer">
-            <p><strong>VINICIA SECURITY SERVICES PVT LTD</strong></p>
+            <img class="footer-logo" src="/public-assets/duckmini-logo.png" alt="DuckMini — One Platform. Total Visibility." />
+            <p><strong>DUCKMINI</strong></p>
+            <p>ONE PLATFORM. TOTAL VISIBILITY.</p>
             <p>Verified by Mobile GPS & Digital Timestamp. All Rights Reserved.</p>
         </footer>
     </main>
@@ -732,6 +735,8 @@ router.get("/feedback/:visitId", async (req, res) => {
             padding: 28px;
             box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
         }
+        .feedback-brand { text-align: center; margin-bottom: 14px; }
+        .feedback-brand img { display: block; width: 210px; max-width: 90%; height: auto; object-fit: contain; background: #fff; border-radius: 4px; margin: 0 auto; }
         h2 { font-size: 20px; color: #1e3a8a; margin-bottom: 6px; }
         p.sub { font-size: 13px; color: #64748b; margin-bottom: 20px; }
         .meta-strip { background: #f1f5f9; padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 20px; }
@@ -775,8 +780,9 @@ router.get("/feedback/:visitId", async (req, res) => {
 </head>
 <body>
     <div class="card">
+        <div class="feedback-brand"><img src="/public-assets/duckmini-logo.png" alt="DuckMini — One Platform. Total Visibility." /></div>
         <h2>Client Service Feedback</h2>
-        <p class="sub">Please rate your site audit experience with Vinicia Security Services.</p>
+        <p class="sub">Please rate your site audit experience with DuckMini.</p>
 
         <div class="meta-strip">
             <div>Site: <strong>${siteName}</strong></div>

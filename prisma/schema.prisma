@@ -66,6 +66,7 @@ model User {
   email        String     @unique
   passwordHash String
   phone        String?
+  designation  String?
   role         UserRole   @default(FIELD_STAFF)
   status       UserStatus @default(ACTIVE)
 

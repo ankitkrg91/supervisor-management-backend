@@ -1907,6 +1907,192 @@ const getDashboard = async (
     }
 };
 
+
+// ============================================================
+// DASHBOARD SITE VISIT LIST
+// Returns the active sites represented by a dashboard chart slice.
+// The filters and month boundaries mirror the dashboard chart logic.
+// ============================================================
+const getDashboardSiteVisits = async (req, res) => {
+    try {
+        const {
+            period = "current",
+            status = "VISITED",
+            regions: regionsParam,
+            branches: branchesParam,
+            clients: clientsParam,
+        } = req.query;
+
+        const normalizedPeriod = String(period).toLowerCase();
+        const normalizedStatus = String(status).toUpperCase();
+
+        if (!["current", "last"].includes(normalizedPeriod)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid period. Use current or last.",
+            });
+        }
+
+        if (!["VISITED", "NOT-VISITED"].includes(normalizedStatus)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid status. Use VISITED or NOT-VISITED.",
+            });
+        }
+
+        const regions = parseList(regionsParam);
+        const branches = parseList(branchesParam);
+        const clients = parseList(clientsParam);
+
+        const siteWhere = buildSiteWhere({ regions, branches });
+        const activeSites = await prisma.site.findMany({
+            where: siteWhere,
+            select: { id: true },
+        });
+
+        let filteredSiteIds = activeSites.map((site) => site.id);
+
+        // Keep the same client-to-site filtering used by the dashboard charts.
+        if (clients !== null) {
+            if (clients.length === 0) {
+                filteredSiteIds = [];
+            } else {
+                const clientSiteRows = await prisma.visit.findMany({
+                    where: { clientName: { in: clients } },
+                    select: { siteId: true },
+                    distinct: ["siteId"],
+                });
+                const clientSiteIds = new Set(clientSiteRows.map((row) => row.siteId));
+                filteredSiteIds = filteredSiteIds.filter((siteId) => clientSiteIds.has(siteId));
+            }
+        }
+
+        if (filteredSiteIds.length === 0) {
+            return res.status(200).json({
+                success: true,
+                data: {
+                    sites: [],
+                    count: 0,
+                    period: normalizedPeriod,
+                    status: normalizedStatus,
+                },
+            });
+        }
+
+        const monthRange = getMonthRange(normalizedPeriod === "current" ? 0 : -1);
+        const monthlyVisits = await prisma.visit.findMany({
+            where: {
+                visitAt: {
+                    gte: monthRange.start,
+                    lte: monthRange.end,
+                },
+                siteId: { in: filteredSiteIds },
+                ...buildClientWhere(clients),
+            },
+            select: {
+                siteId: true,
+                visitAt: true,
+                branch: true,
+                region: true,
+                clientName: true,
+                user: { select: { name: true } },
+            },
+            orderBy: { visitAt: "desc" },
+        });
+
+        const monthlyVisitBySite = new Map();
+        for (const visit of monthlyVisits) {
+            if (!monthlyVisitBySite.has(visit.siteId)) {
+                monthlyVisitBySite.set(visit.siteId, visit);
+            }
+        }
+
+        const visitedSiteIds = new Set(monthlyVisitBySite.keys());
+        const targetSiteIds = normalizedStatus === "VISITED"
+            ? [...visitedSiteIds]
+            : filteredSiteIds.filter((siteId) => !visitedSiteIds.has(siteId));
+
+        if (targetSiteIds.length === 0) {
+            return res.status(200).json({
+                success: true,
+                data: {
+                    sites: [],
+                    count: 0,
+                    period: normalizedPeriod,
+                    status: normalizedStatus,
+                },
+            });
+        }
+
+        const sites = await prisma.site.findMany({
+            where: { id: { in: targetSiteIds } },
+            select: {
+                id: true,
+                name: true,
+                siteCode: true,
+                address: true,
+                city: true,
+                state: true,
+                pincode: true,
+                clientName: true,
+                users: {
+                    where: { status: "ACTIVE", role: "SUPERVISOR" },
+                    select: { name: true },
+                    orderBy: { name: "asc" },
+                },
+                visits: {
+                    take: 1,
+                    orderBy: { visitAt: "desc" },
+                    select: {
+                        branch: true,
+                        region: true,
+                        clientName: true,
+                        user: { select: { name: true } },
+                    },
+                },
+            },
+            orderBy: { name: "asc" },
+        });
+
+        const data = sites.map((site) => {
+            const monthVisit = monthlyVisitBySite.get(site.id);
+            const latestVisit = site.visits?.[0];
+            const assignedOwners = (site.users || [])
+                .map((user) => user.name)
+                .filter(Boolean);
+
+            return {
+                id: site.id,
+                siteId: site.siteCode || "—",
+                siteName: site.name || "—",
+                address: [site.address, site.pincode].filter(Boolean).join(", ") || "—",
+                branch: monthVisit?.branch || latestVisit?.branch || site.city || "—",
+                region: monthVisit?.region || latestVisit?.region || "—",
+                clientName: site.clientName || monthVisit?.clientName || latestVisit?.clientName || "—",
+                siteOwner: assignedOwners.join(", ") || monthVisit?.user?.name || latestVisit?.user?.name || "—",
+                state: site.state || "—",
+            };
+        });
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                sites: data,
+                count: data.length,
+                period: normalizedPeriod,
+                status: normalizedStatus,
+            },
+        });
+    } catch (error) {
+        console.error("Dashboard site visit list error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Failed to load dashboard site visit list.",
+        });
+    }
+};
+
 export {
     getDashboard,
+    getDashboardSiteVisits,
 };
