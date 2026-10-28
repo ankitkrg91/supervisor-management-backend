@@ -11,10 +11,18 @@ const extractSelfieFromVisit = (visit) => {
 
     if (visit.notes && typeof visit.notes === "string") {
         try {
-            const m = visit.notes.match(/\[SITE_EVIDENCE\]:\s*(\{[\s\S]*?\})/);
+            const m = visit.notes.match(
+                /\[SITE_EVIDENCE\]:\s*(\{[\s\S]*?\})/
+            );
+
             if (m) {
                 const ev = JSON.parse(m[1]);
-                if (ev.selfie && typeof ev.selfie === "string" && ev.selfie.trim().length > 0) {
+
+                if (
+                    ev.selfie &&
+                    typeof ev.selfie === "string" &&
+                    ev.selfie.trim().length > 0
+                ) {
                     return ev.selfie.trim();
                 }
             }
@@ -23,10 +31,11 @@ const extractSelfieFromVisit = (visit) => {
 
     if (visit.notes && typeof visit.notes === "string") {
         try {
-            const m = visit.notes.match(/\[CHECKIN_SELFIE\]:\s*(data:image\/[^\s\n]+|https?:\/\/[^\s\n]+)/);
-            if (m) {
-                return m[1].trim();
-            }
+            const m = visit.notes.match(
+                /\[CHECKIN_SELFIE\]:\s*(data:image\/[^\s\n]+|https?:\/\/[^\s\n]+)/
+            );
+
+            if (m) return m[1].trim();
         } catch (_) { }
     }
 
@@ -39,7 +48,7 @@ const extractSelfieFromVisit = (visit) => {
 
 /*
  * ============================================================
- * CREATE CHECK-IN (SUPPORTS STANDARD & RAIN/EMERGENCY EXCEPTION)
+ * CREATE CHECK-IN
  * ============================================================
  */
 const createCheckIn = async (req, res) => {
@@ -133,7 +142,7 @@ const createCheckIn = async (req, res) => {
         const assignedTask = await prisma.task.findFirst({
             where: {
                 assignedToId: userId,
-                siteId: siteId,
+                siteId,
                 status: { not: "CANCELLED" },
             },
             select: {
@@ -152,9 +161,10 @@ const createCheckIn = async (req, res) => {
         if (!assignedTask) {
             return res.status(403).json({
                 success: false,
-                message: "This task is not assigned to the logged-in Supervisor for this site.",
+                message:
+                    "This task is not assigned to the logged-in Supervisor for this site.",
                 data: {
-                    userId: userId,
+                    userId,
                     requestedSiteId: siteId,
                 },
             });
@@ -199,43 +209,47 @@ const createCheckIn = async (req, res) => {
             });
         }
 
-        // Emergency mode must be explicitly requested with a meaningful reason.
-        // A reason alone must never bypass the geofence.
         const isAlternateMode = isAlternate === true;
         const normalizedAlternateReason =
-            typeof alternateReason === "string" ? alternateReason.trim() : "";
+            typeof alternateReason === "string"
+                ? alternateReason.trim()
+                : "";
 
         if (isAlternateMode && normalizedAlternateReason.length < 5) {
             return res.status(400).json({
                 success: false,
-                message: "Emergency check-in reason must be at least 5 characters",
+                message:
+                    "Emergency check-in reason must be at least 5 characters",
             });
         }
 
         if (isAlternateMode && normalizedAlternateReason.length > 500) {
             return res.status(400).json({
                 success: false,
-                message: "Emergency check-in reason must not exceed 500 characters",
+                message:
+                    "Emergency check-in reason must not exceed 500 characters",
             });
         }
 
-        // Normal check-in requires the supervisor to be within 200m of the selected site.
-        // Emergency mode bypasses only the distance limit; GPS is still recorded.
         const calculateDistanceMeters = (lat1, lon1, lat2, lon2) => {
             const R = 6371e3;
             const phi1 = (lat1 * Math.PI) / 180;
             const phi2 = (lat2 * Math.PI) / 180;
             const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
             const deltaLambda = ((lon2 - lon1) * Math.PI) / 180;
+
             const a =
-                Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
-                Math.cos(phi1) * Math.cos(phi2) *
-                Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+                Math.sin(deltaPhi / 2) ** 2 +
+                Math.cos(phi1) *
+                Math.cos(phi2) *
+                Math.sin(deltaLambda / 2) ** 2;
+
             const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
             return R * c;
         };
 
         let calculatedDistance = null;
+
         const hasSiteCoordinates =
             site.latitude !== null &&
             site.latitude !== undefined &&
@@ -253,7 +267,9 @@ const createCheckIn = async (req, res) => {
             if (!isAlternateMode && calculatedDistance > 200) {
                 return res.status(400).json({
                     success: false,
-                    message: `Check-in is only allowed within 200 meters of the site. You are currently ${Math.round(calculatedDistance)}m away from ${site.name}. Use Emergency Check-In only for a genuine emergency.`,
+                    message: `Check-in is only allowed within 200 meters of the site. You are currently ${Math.round(
+                        calculatedDistance
+                    )}m away from ${site.name}. Use Emergency Check-In only for a genuine emergency.`,
                     data: {
                         distanceMeters: Math.round(calculatedDistance),
                         allowedRadiusMeters: 200,
@@ -264,7 +280,8 @@ const createCheckIn = async (req, res) => {
         } else if (!isAlternateMode) {
             return res.status(400).json({
                 success: false,
-                message: "This site's GPS coordinates are not configured. Ask the Admin to update the site location, or use Emergency Check-In only if there is a genuine emergency.",
+                message:
+                    "This site's GPS coordinates are not configured. Ask the Admin to update the site location, or use Emergency Check-In only if there is a genuine emergency.",
                 data: {
                     allowedRadiusMeters: 200,
                     siteName: site.name,
@@ -274,8 +291,8 @@ const createCheckIn = async (req, res) => {
 
         const existingCheckIn = await prisma.checkInOut.findFirst({
             where: {
-                userId: userId,
-                siteId: siteId,
+                userId,
+                siteId,
                 status: "CHECKED_IN",
                 checkOutAt: null,
             },
@@ -323,6 +340,8 @@ const createCheckIn = async (req, res) => {
             });
         }
 
+// Remaining createCheckIn implementation continues in Part 2.
+
         // Record check-in visit note with reason if Alternate
         try {
             const today = new Date();
@@ -349,11 +368,15 @@ const createCheckIn = async (req, res) => {
 
             if (existingVisit) {
                 let notes = existingVisit.notes || "";
+
                 if (!notes.includes("[SITE_EVIDENCE]")) {
                     notes = notes
                         ? `${notes}\n[SITE_EVIDENCE]: ${evJson}\n${reasonTag}`
                         : `[SITE_EVIDENCE]: ${evJson}\n${reasonTag}`;
-                } else if (!notes.includes("[ALTERNATE_CHECKIN]") && isAlternateMode) {
+                } else if (
+                    !notes.includes("[ALTERNATE_CHECKIN]") &&
+                    isAlternateMode
+                ) {
                     notes = `${notes}\n${reasonTag}`;
                 }
 
@@ -363,8 +386,15 @@ const createCheckIn = async (req, res) => {
                         photoUrl: existingVisit.photoUrl || photoUrl || null,
                         latitude: parsedLatitude ?? existingVisit.latitude,
                         longitude: parsedLongitude ?? existingVisit.longitude,
-                        ...(isAlternateMode && ["Site Check-In", "Alternate Check-In (Rain/Emergency)"].includes(existingVisit.reportType)
-                            ? { reportType: "Alternate Check-In (Rain/Emergency)" }
+                        ...(isAlternateMode &&
+                            [
+                                "Site Check-In",
+                                "Alternate Check-In (Rain/Emergency)",
+                            ].includes(existingVisit.reportType)
+                            ? {
+                                reportType:
+                                    "Alternate Check-In (Rain/Emergency)",
+                            }
                             : {}),
                         notes,
                     },
@@ -375,13 +405,17 @@ const createCheckIn = async (req, res) => {
                         userId,
                         siteId,
                         visitAt: new Date(),
-                        reportType: isAlternateMode ? "Alternate Check-In (Rain/Emergency)" : "Site Check-In",
+                        reportType: isAlternateMode
+                            ? "Alternate Check-In (Rain/Emergency)"
+                            : "Site Check-In",
                         clientName: assignedTask?.title || "Client Site",
                         latitude: parsedLatitude,
                         longitude: parsedLongitude,
                         photoUrl: photoUrl || null,
                         status: "APPROVED",
-                        notes: `Check-in verified at ${new Date().toLocaleTimeString("en-IN")}\n[SITE_EVIDENCE]: ${evJson}\n${reasonTag}`,
+                        notes: `Check-in verified at ${new Date().toLocaleTimeString(
+                            "en-IN"
+                        )}\n[SITE_EVIDENCE]: ${evJson}\n${reasonTag}`,
                     },
                 });
             }
@@ -391,8 +425,8 @@ const createCheckIn = async (req, res) => {
 
         const checkIn = await prisma.checkInOut.create({
             data: {
-                userId: userId,
-                siteId: siteId,
+                userId,
+                siteId,
                 checkInAt: new Date(),
                 checkInLatitude: parsedLatitude,
                 checkInLongitude: parsedLongitude,
@@ -431,7 +465,9 @@ const createCheckIn = async (req, res) => {
                     ...checkIn,
                     checkInPhotoUrl: photoUrl || null,
                     isAlternate: isAlternateMode,
-                    alternateReason: isAlternateMode ? normalizedAlternateReason : null,
+                    alternateReason: isAlternateMode
+                        ? normalizedAlternateReason
+                        : null,
                 },
                 task: {
                     id: assignedTask.id,
@@ -478,18 +514,11 @@ const getCheckIns = async (req, res) => {
 
         const where = {};
 
-        if (siteId) {
-            where.siteId = siteId;
-        }
-
-        if (userId) {
-            where.userId = userId;
-        }
+        if (siteId) where.siteId = siteId;
+        if (userId) where.userId = userId;
 
         if (role) {
-            where.user = {
-                role: role,
-            };
+            where.user = { role };
         }
 
         if (search) {
@@ -515,9 +544,11 @@ const getCheckIns = async (req, res) => {
 
         if (from || to) {
             where.checkInAt = {};
+
             if (from) {
                 where.checkInAt.gte = new Date(from);
             }
+
             if (to) {
                 const toDate = new Date(to);
                 toDate.setHours(23, 59, 59, 999);
@@ -559,16 +590,18 @@ const getCheckIns = async (req, res) => {
 
         const totalPages = Math.ceil(total / limitNumber);
 
-        // Enrich check-ins with selfie photos and alternate check-in notes
+        // Enrich check-ins with selfie photos, alternate check-in notes,
+        // and Emergency Audit reason/remark where a matching visit exists.
         const enrichedCheckIns = await Promise.all(
             checkIns.map(async (ci) => {
                 const checkInDate = new Date(ci.checkInAt);
                 const dayStart = new Date(checkInDate);
                 dayStart.setHours(0, 0, 0, 0);
+
                 const dayEnd = new Date(checkInDate);
                 dayEnd.setHours(23, 59, 59, 999);
 
-                // 1. Visit on the same day for this user & site
+                // 1. Visit on the same day for this user and site
                 let visit = await prisma.visit.findFirst({
                     where: {
                         userId: ci.userId,
@@ -596,89 +629,135 @@ const getCheckIns = async (req, res) => {
                         },
                         orderBy: { visitAt: "desc" },
                     });
-                    if (evVisit) {
-                        visit = evVisit;
-                    }
+
+                    if (evVisit) visit = evVisit;
                 }
 
                 const selfie = extractSelfieFromVisit(visit);
 
-                // Check if alternate check-in note is present in visit or any visit around that check-in date
+                // Check whether alternate check-in note is present
                 let isAlternate = false;
                 let alternateReason = null;
 
                 if (
-                    (visit?.notes && typeof visit.notes === "string" && visit.notes.includes("[ALTERNATE_CHECKIN]")) ||
-                    (visit?.reportType && typeof visit.reportType === "string" && visit.reportType.includes("Alternate"))
+                    (visit?.notes &&
+                        typeof visit.notes === "string" &&
+                        visit.notes.includes("[ALTERNATE_CHECKIN]")) ||
+                    (visit?.reportType &&
+                        typeof visit.reportType === "string" &&
+                        visit.reportType.includes("Alternate"))
                 ) {
                     isAlternate = true;
-                    const match = visit?.notes?.match(/\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/);
-                    alternateReason = match ? match[1].trim() : "Rain / Weather Emergency";
-                }
-
-                // Find an Emergency Audit submitted by this supervisor for this site
-                // on the same calendar day as the check-in. Emergency audit reason and
-                // remark are persisted in Visit.notes as:
-                // [EMERGENCY_AUDIT]: <reason> | <remark>
-                let emergencyAuditReason = null;
-                let emergencyAuditRemark = null;
-                const emergencyAuditVisit = await prisma.visit.findFirst({
-                    where: {
-                        userId: ci.userId,
-                        siteId: ci.siteId,
-                        visitAt: { gte: dayStart, lte: dayEnd },
-                        OR: [
-                            { notes: { contains: "[EMERGENCY_AUDIT]" } },
-                            { reportType: { contains: "Emergency Audit" } },
-                        ],
-                    },
-                    orderBy: { visitAt: "desc" },
-                });
-
-                if (emergencyAuditVisit) {
-                    const notes = typeof emergencyAuditVisit.notes === "string"
-                        ? emergencyAuditVisit.notes
-                        : "";
-                    const match = notes.match(/\[EMERGENCY_AUDIT\]:\s*([^\n]*)/);
-                    if (match) {
-                        const payload = match[1].trim();
-                        const separator = payload.indexOf("|");
-                        if (separator >= 0) {
-                            emergencyAuditReason = payload.slice(0, separator).trim() || null;
-                            emergencyAuditRemark = payload.slice(separator + 1).trim() || null;
-                        } else {
-                            emergencyAuditReason = payload || null;
-                        }
-                    }
-
-                    // Older/newer clients may send these as explicit Visit fields.
-                    emergencyAuditReason = emergencyAuditReason ||
-                        emergencyAuditVisit.emergencyReason || null;
-                    emergencyAuditRemark = emergencyAuditRemark ||
-                        emergencyAuditVisit.emergencyRemark || null;
+                    const match = visit?.notes?.match(
+                        /\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/
+                    );
+                    alternateReason = match
+                        ? match[1].trim()
+                        : "Rain / Weather Emergency";
                 }
 
                 if (!isAlternate) {
-                    const twentyFourHoursBefore = new Date(checkInDate.getTime() - 24 * 60 * 60 * 1000);
-                    const twentyFourHoursAfter = new Date(checkInDate.getTime() + 24 * 60 * 60 * 1000);
+                    const twentyFourHoursBefore = new Date(
+                        checkInDate.getTime() - 24 * 60 * 60 * 1000
+                    );
+                    const twentyFourHoursAfter = new Date(
+                        checkInDate.getTime() + 24 * 60 * 60 * 1000
+                    );
+
                     const anyAlt = await prisma.visit.findFirst({
                         where: {
                             userId: ci.userId,
                             siteId: ci.siteId,
                             OR: [
-                                { notes: { contains: "[ALTERNATE_CHECKIN]" } },
-                                { reportType: { contains: "Alternate" } },
+                                {
+                                    notes: {
+                                        contains: "[ALTERNATE_CHECKIN]",
+                                    },
+                                },
+                                {
+                                    reportType: {
+                                        contains: "Alternate",
+                                    },
+                                },
                             ],
-                            visitAt: { gte: twentyFourHoursBefore, lte: twentyFourHoursAfter },
+                            visitAt: {
+                                gte: twentyFourHoursBefore,
+                                lte: twentyFourHoursAfter,
+                            },
                         },
                         orderBy: { visitAt: "desc" },
                     });
 
                     if (anyAlt) {
                         isAlternate = true;
-                        const match = anyAlt.notes?.match(/\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/);
-                        alternateReason = match ? match[1].trim() : "Rain / Weather Emergency";
+                        const match = anyAlt.notes?.match(
+                            /\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/
+                        );
+                        alternateReason = match
+                            ? match[1].trim()
+                            : "Rain / Weather Emergency";
                     }
+                }
+
+                // Emergency Audit details are separate from check-in mode.
+                // Find a matching audit visit for this supervisor/site/day.
+                let emergencyAuditReason = null;
+                let emergencyAuditRemark = null;
+
+                const emergencyAuditVisit = await prisma.visit.findFirst({
+                    where: {
+                        userId: ci.userId,
+                        siteId: ci.siteId,
+                        visitAt: { gte: dayStart, lte: dayEnd },
+                        OR: [
+                            {
+                                notes: {
+                                    contains: "[EMERGENCY_AUDIT]",
+                                },
+                            },
+                            {
+                                reportType: {
+                                    contains: "Emergency Audit",
+                                },
+                            },
+                        ],
+                    },
+                    orderBy: { visitAt: "desc" },
+                });
+
+                if (emergencyAuditVisit) {
+                    const notes =
+                        typeof emergencyAuditVisit.notes === "string"
+                            ? emergencyAuditVisit.notes
+                            : "";
+
+                    const match = notes.match(
+                        /\[EMERGENCY_AUDIT\]:\s*([^\n]*)/
+                    );
+
+                    if (match) {
+                        const payload = match[1].trim();
+                        const separator = payload.indexOf("|");
+
+                        if (separator >= 0) {
+                            emergencyAuditReason =
+                                payload.slice(0, separator).trim() || null;
+                            emergencyAuditRemark =
+                                payload.slice(separator + 1).trim() || null;
+                        } else {
+                            emergencyAuditReason = payload || null;
+                        }
+                    }
+
+                    emergencyAuditReason =
+                        emergencyAuditReason ||
+                        emergencyAuditVisit.emergencyReason ||
+                        null;
+
+                    emergencyAuditRemark =
+                        emergencyAuditRemark ||
+                        emergencyAuditVisit.emergencyRemark ||
+                        null;
                 }
 
                 return {
@@ -711,7 +790,10 @@ const getCheckIns = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to fetch check-ins",
-            error: process.env.NODE_ENV === "development" ? error.message : undefined,
+            error:
+                process.env.NODE_ENV === "development"
+                    ? error.message
+                    : undefined,
         });
     }
 };
@@ -792,13 +874,20 @@ const checkOut = async (req, res) => {
 
             const lat1 = toRadians(Number(checkIn.checkInLatitude));
             const lat2 = toRadians(parsedCheckoutLatitude);
-            const deltaLat = toRadians(parsedCheckoutLatitude - Number(checkIn.checkInLatitude));
-            const deltaLon = toRadians(parsedCheckoutLongitude - Number(checkIn.checkInLongitude));
+            const deltaLat = toRadians(
+                parsedCheckoutLatitude - Number(checkIn.checkInLatitude)
+            );
+            const deltaLon = toRadians(
+                parsedCheckoutLongitude -
+                Number(checkIn.checkInLongitude)
+            );
 
             const a =
                 Math.sin(deltaLat / 2) ** 2 +
-                Math.cos(lat1) * Math.cos(lat2) *
+                Math.cos(lat1) *
+                Math.cos(lat2) *
                 Math.sin(deltaLon / 2) ** 2;
+
             const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
             distanceTravelled = Number((earthRadiusKm * c).toFixed(3));
@@ -843,7 +932,10 @@ const checkOut = async (req, res) => {
                 console.log("Audit completion email result:", result);
             })
             .catch((emailError) => {
-                console.error("Audit completion email failed:", emailError);
+                console.error(
+                    "Audit completion email failed:",
+                    emailError
+                );
             });
 
         return res.status(200).json({
@@ -858,7 +950,10 @@ const checkOut = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to check out",
-            error: process.env.NODE_ENV === "development" ? error.message : undefined,
+            error:
+                process.env.NODE_ENV === "development"
+                    ? error.message
+                    : undefined,
         });
     }
 };
@@ -909,7 +1004,10 @@ const getCheckInById = async (req, res) => {
             });
         }
 
-        if (currentUser.role === "SUPERVISOR" && checkIn.userId !== currentUser.userId) {
+        if (
+            currentUser.role === "SUPERVISOR" &&
+            checkIn.userId !== currentUser.userId
+        ) {
             return res.status(403).json({
                 success: false,
                 message: "You do not have permission to access this check-in",
@@ -927,7 +1025,10 @@ const getCheckInById = async (req, res) => {
 
         if (!visit) {
             visit = await prisma.visit.findFirst({
-                where: { userId: checkIn.userId, siteId: checkIn.siteId },
+                where: {
+                    userId: checkIn.userId,
+                    siteId: checkIn.siteId,
+                },
                 orderBy: { visitAt: "desc" },
             });
         }
@@ -936,36 +1037,70 @@ const getCheckInById = async (req, res) => {
 
         let isAlternate = false;
         let alternateReason = null;
+
         if (
-            (visit?.notes && typeof visit.notes === "string" && visit.notes.includes("[ALTERNATE_CHECKIN]")) ||
-            (visit?.reportType && typeof visit.reportType === "string" && visit.reportType.includes("Alternate"))
+            (visit?.notes &&
+                typeof visit.notes === "string" &&
+                visit.notes.includes("[ALTERNATE_CHECKIN]")) ||
+            (visit?.reportType &&
+                typeof visit.reportType === "string" &&
+                visit.reportType.includes("Alternate"))
         ) {
-            const match = visit?.notes?.match(/\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/);
+            const match = visit?.notes?.match(
+                /\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/
+            );
+
             isAlternate = true;
-            alternateReason = match ? match[1].trim() : "Rain / Weather Emergency";
+            alternateReason = match
+                ? match[1].trim()
+                : "Rain / Weather Emergency";
         }
 
         if (!isAlternate) {
             const checkInDate = new Date(checkIn.checkInAt);
-            const twentyFourHoursBefore = new Date(checkInDate.getTime() - 24 * 60 * 60 * 1000);
-            const twentyFourHoursAfter = new Date(checkInDate.getTime() + 24 * 60 * 60 * 1000);
+
+            const twentyFourHoursBefore = new Date(
+                checkInDate.getTime() - 24 * 60 * 60 * 1000
+            );
+
+            const twentyFourHoursAfter = new Date(
+                checkInDate.getTime() + 24 * 60 * 60 * 1000
+            );
+
             const anyAlt = await prisma.visit.findFirst({
                 where: {
                     userId: checkIn.userId,
                     siteId: checkIn.siteId,
                     OR: [
-                        { notes: { contains: "[ALTERNATE_CHECKIN]" } },
-                        { reportType: { contains: "Alternate" } },
+                        {
+                            notes: {
+                                contains: "[ALTERNATE_CHECKIN]",
+                            },
+                        },
+                        {
+                            reportType: {
+                                contains: "Alternate",
+                            },
+                        },
                     ],
-                    visitAt: { gte: twentyFourHoursBefore, lte: twentyFourHoursAfter },
+                    visitAt: {
+                        gte: twentyFourHoursBefore,
+                        lte: twentyFourHoursAfter,
+                    },
                 },
                 orderBy: { visitAt: "desc" },
             });
 
             if (anyAlt) {
                 isAlternate = true;
-                const match = anyAlt.notes?.match(/\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/);
-                alternateReason = match ? match[1].trim() : "Rain / Weather Emergency";
+
+                const match = anyAlt.notes?.match(
+                    /\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/
+                );
+
+                alternateReason = match
+                    ? match[1].trim()
+                    : "Rain / Weather Emergency";
             }
         }
 
@@ -985,7 +1120,10 @@ const getCheckInById = async (req, res) => {
         return res.status(500).json({
             success: false,
             message: "Failed to fetch check-in record",
-            error: process.env.NODE_ENV === "development" ? error.message : undefined,
+            error:
+                process.env.NODE_ENV === "development"
+                    ? error.message
+                    : undefined,
         });
     }
 };
