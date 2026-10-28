@@ -7,17 +7,22 @@ import { sendSuccess, sendError } from "../utils/response.js";
 /**
  * Helper: Find user by Email, Employee ID prefix, Phone, or Name
  */
-const findUserByIdentifier = async (rawIdentifier) => {
+const findUserByIdentifier = async (rawIdentifier, requiredRole = null) => {
     const cleanId = String(rawIdentifier || "").trim();
     const lowerId = cleanId.toLowerCase();
 
     return prisma.user.findFirst({
         where: {
-            OR: [
-                { email: lowerId },
-                { email: { startsWith: `${lowerId}@` } },
-                { phone: cleanId },
-                { name: { equals: cleanId, mode: "insensitive" } },
+            AND: [
+                {
+                    OR: [
+                        { email: lowerId },
+                        { email: { startsWith: `${lowerId}@` } },
+                        { phone: cleanId },
+                        { name: { equals: cleanId, mode: "insensitive" } },
+                    ],
+                },
+                ...(requiredRole ? [{ role: requiredRole }] : []),
             ],
         },
         include: {
@@ -47,18 +52,14 @@ export const login = async (req, res, next) => {
             return sendError(res, 400, "Email/ID and password are required");
         }
 
-        const user = await findUserByIdentifier(identifier);
+        const user = await findUserByIdentifier(identifier, "SUPER_ADMIN");
 
         if (!user) {
-            return sendError(res, 401, "Invalid email/ID or password");
+            return sendError(res, 401, "Invalid email/mobile number or password, or no Super Admin account is registered with this identifier");
         }
 
         if (user.status === "INACTIVE") {
             return sendError(res, 403, "Your account has been deactivated");
-        }
-
-        if (user.role !== "SUPER_ADMIN") {
-            return sendError(res, 403, "Access denied. Only Super Admin can login to this portal.");
         }
 
         const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
