@@ -616,6 +616,48 @@ const getCheckIns = async (req, res) => {
                     alternateReason = match ? match[1].trim() : "Rain / Weather Emergency";
                 }
 
+                // Find an Emergency Audit submitted by this supervisor for this site
+                // on the same calendar day as the check-in. Emergency audit reason and
+                // remark are persisted in Visit.notes as:
+                // [EMERGENCY_AUDIT]: <reason> | <remark>
+                let emergencyAuditReason = null;
+                let emergencyAuditRemark = null;
+                const emergencyAuditVisit = await prisma.visit.findFirst({
+                    where: {
+                        userId: ci.userId,
+                        siteId: ci.siteId,
+                        visitAt: { gte: dayStart, lte: dayEnd },
+                        OR: [
+                            { notes: { contains: "[EMERGENCY_AUDIT]" } },
+                            { reportType: { contains: "Emergency Audit" } },
+                        ],
+                    },
+                    orderBy: { visitAt: "desc" },
+                });
+
+                if (emergencyAuditVisit) {
+                    const notes = typeof emergencyAuditVisit.notes === "string"
+                        ? emergencyAuditVisit.notes
+                        : "";
+                    const match = notes.match(/\[EMERGENCY_AUDIT\]:\s*([^\n]*)/);
+                    if (match) {
+                        const payload = match[1].trim();
+                        const separator = payload.indexOf("|");
+                        if (separator >= 0) {
+                            emergencyAuditReason = payload.slice(0, separator).trim() || null;
+                            emergencyAuditRemark = payload.slice(separator + 1).trim() || null;
+                        } else {
+                            emergencyAuditReason = payload || null;
+                        }
+                    }
+
+                    // Older/newer clients may send these as explicit Visit fields.
+                    emergencyAuditReason = emergencyAuditReason ||
+                        emergencyAuditVisit.emergencyReason || null;
+                    emergencyAuditRemark = emergencyAuditRemark ||
+                        emergencyAuditVisit.emergencyRemark || null;
+                }
+
                 if (!isAlternate) {
                     const twentyFourHoursBefore = new Date(checkInDate.getTime() - 24 * 60 * 60 * 1000);
                     const twentyFourHoursAfter = new Date(checkInDate.getTime() + 24 * 60 * 60 * 1000);
@@ -644,6 +686,9 @@ const getCheckIns = async (req, res) => {
                     checkInPhotoUrl: selfie,
                     isAlternate,
                     alternateReason,
+                    isEmergencyAudit: Boolean(emergencyAuditVisit),
+                    emergencyAuditReason,
+                    emergencyAuditRemark,
                 };
             })
         );
