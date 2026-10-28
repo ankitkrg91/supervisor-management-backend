@@ -249,6 +249,43 @@ const getSites = async (req, res) => {
 };
 
 /*
+ * GET ACTIVE SITES FOR STANDALONE EMERGENCY AUDITS
+ * This endpoint is intentionally supervisor-only and returns only the fields
+ * needed to identify a site and capture its location in the field app.
+ */
+const getEmergencyAuditSites = async (req, res) => {
+    try {
+        const sites = await prisma.site.findMany({
+            where: { status: "ACTIVE" },
+            select: {
+                id: true,
+                name: true,
+                siteCode: true,
+                address: true,
+                city: true,
+                state: true,
+                pincode: true,
+                latitude: true,
+                longitude: true,
+                status: true,
+            },
+            orderBy: { name: "asc" },
+        });
+
+        return res.status(200).json({
+            success: true,
+            data: { sites, count: sites.length },
+        });
+    } catch (error) {
+        console.error("Get emergency audit sites error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Failed to fetch sites for emergency audit",
+        });
+    }
+};
+
+/*
  * UPDATE SITE
  */
 const updateSite = async (req, res) => {
@@ -445,5 +482,6 @@ const updateSite = async (req, res) => {
 export {
     createSite,
     getSites,
+    getEmergencyAuditSites,
     updateSite,
 };

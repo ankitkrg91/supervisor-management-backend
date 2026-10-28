@@ -41,6 +41,7 @@ const createVisit = async (req, res) => {
         const {
             siteId, visitAt, reportType, clientName, branch,
             region, latitude, longitude, photoUrl, photoFileId, notes,
+            isEmergencyAudit, emergencyReason, emergencyRemark,
         } = req.body || {};
 
         if (!siteId) {
@@ -67,24 +68,57 @@ const createVisit = async (req, res) => {
         if (!site) return res.status(404).json({ success: false, message: "Site not found" });
         if (site.status !== "ACTIVE") return res.status(400).json({ success: false, message: "Site is inactive" });
 
-        const taskId = extractTaskIdFromNotes(notes);
+        const cleanNotes = typeof notes === "string" && notes.trim() ? notes.trim() : null;
+        const emergencyMarker = cleanNotes
+            ? cleanNotes.match(/\[EMERGENCY_AUDIT\]:\s*([^\n|]+)(?:\s*\|\s*([^\n]+))?/i)
+            : null;
+        const requestedReportType = typeof reportType === "string" ? reportType.trim().toUpperCase() : "";
+        const isEmergencyAuditVisit = isEmergencyAudit === true
+            || requestedReportType === "EMERGENCY AUDIT"
+            || requestedReportType === "EMERGENCY_AUDIT"
+            || Boolean(emergencyMarker);
+
+        const cleanEmergencyReason = String(
+            typeof emergencyReason === "string" && emergencyReason.trim()
+                ? emergencyReason.trim()
+                : emergencyMarker?.[1] || ""
+        ).trim();
+        const cleanEmergencyRemark = String(
+            typeof emergencyRemark === "string" && emergencyRemark.trim()
+                ? emergencyRemark.trim()
+                : emergencyMarker?.[2] || ""
+        ).trim();
+
+        if (isEmergencyAuditVisit) {
+            if (cleanEmergencyReason.length < 3) {
+                return res.status(400).json({ success: false, message: "Emergency audit reason is required" });
+            }
+            if (cleanEmergencyRemark.length < 3) {
+                return res.status(400).json({ success: false, message: "Emergency audit remark is required" });
+            }
+        }
+
+        // A standalone emergency audit is not linked to, or blocked by, a scheduled task.
+        const taskId = isEmergencyAuditVisit ? null : extractTaskIdFromNotes(cleanNotes);
         let assignedTask = null;
 
-        if (taskId) {
-            assignedTask = await prisma.task.findUnique({
-                where: { id: taskId },
-                select: { id: true, title: true, status: true, siteId: true, assignedToId: true },
-            });
-            if (!assignedTask) return res.status(404).json({ success: false, message: "Task not found" });
-            if (assignedTask.assignedToId !== userId) return res.status(403).json({ success: false, message: "Task is not assigned to logged-in Supervisor" });
-            if (assignedTask.siteId !== siteId) return res.status(403).json({ success: false, message: "Task belongs to a different site" });
-            if (assignedTask.status === "CANCELLED") return res.status(400).json({ success: false, message: "Cancelled tasks cannot create visits" });
-        } else {
-            assignedTask = await prisma.task.findFirst({
-                where: { assignedToId: userId, siteId, status: { not: "CANCELLED" } },
-                orderBy: { scheduledAt: "asc" },
-            });
-            if (!assignedTask) return res.status(403).json({ success: false, message: "No active task is assigned for this site" });
+        if (!isEmergencyAuditVisit) {
+            if (taskId) {
+                assignedTask = await prisma.task.findUnique({
+                    where: { id: taskId },
+                    select: { id: true, title: true, status: true, siteId: true, assignedToId: true },
+                });
+                if (!assignedTask) return res.status(404).json({ success: false, message: "Task not found" });
+                if (assignedTask.assignedToId !== userId) return res.status(403).json({ success: false, message: "Task is not assigned to logged-in Supervisor" });
+                if (assignedTask.siteId !== siteId) return res.status(403).json({ success: false, message: "Task belongs to a different site" });
+                if (assignedTask.status === "CANCELLED") return res.status(400).json({ success: false, message: "Cancelled tasks cannot create visits" });
+            } else {
+                assignedTask = await prisma.task.findFirst({
+                    where: { assignedToId: userId, siteId, status: { not: "CANCELLED" } },
+                    orderBy: { scheduledAt: "asc" },
+                });
+                if (!assignedTask) return res.status(403).json({ success: false, message: "No active task is assigned for this site" });
+            }
         }
 
         const parsedVisitAt = visitAt ? new Date(visitAt) : new Date();
@@ -97,25 +131,27 @@ const createVisit = async (req, res) => {
 
         const cleanPhotoUrl = typeof photoUrl === "string" && photoUrl.trim() ? photoUrl.trim() : null;
         const cleanPhotoFileId = typeof photoFileId === "string" && photoFileId.trim() ? photoFileId.trim() : null;
-        const cleanNotes = typeof notes === "string" && notes.trim() ? notes.trim() : null;
 
-        // Check existing visit for this task OR recent check-in visit at this site today
+        // Normal visits may update today's existing check-in evidence. Every emergency
+        // audit must create its own immutable visit row, even on the same site/day.
         let existingVisit = null;
-        if (taskId) {
-            existingVisit = await prisma.visit.findFirst({
-                where: { userId, siteId, notes: { contains: `Task ID: ${taskId}` } },
-                orderBy: { visitAt: "desc" },
-                include: visitInclude,
-            });
-        }
-        if (!existingVisit) {
-            const startOfDay = new Date();
-            startOfDay.setHours(0, 0, 0, 0);
-            existingVisit = await prisma.visit.findFirst({
-                where: { userId, siteId, visitAt: { gte: startOfDay }, auditSubmission: { is: null } },
-                orderBy: { visitAt: "desc" },
-                include: visitInclude,
-            });
+        if (!isEmergencyAuditVisit) {
+            if (taskId) {
+                existingVisit = await prisma.visit.findFirst({
+                    where: { userId, siteId, notes: { contains: `Task ID: ${taskId}` } },
+                    orderBy: { visitAt: "desc" },
+                    include: visitInclude,
+                });
+            }
+            if (!existingVisit) {
+                const startOfDay = new Date();
+                startOfDay.setHours(0, 0, 0, 0);
+                existingVisit = await prisma.visit.findFirst({
+                    where: { userId, siteId, visitAt: { gte: startOfDay }, auditSubmission: { is: null } },
+                    orderBy: { visitAt: "desc" },
+                    include: visitInclude,
+                });
+            }
         }
 
         if (existingVisit) {
@@ -151,9 +187,18 @@ const createVisit = async (req, res) => {
             });
         }
 
-        // Nayi visit banne par bhi agar aaj alternate checkin hua tha toh tag carry forward karein
+        // Make emergency metadata explicit in Notes so existing detail/report views
+        // can recognise it without a database migration.
         let createNotes = cleanNotes;
-        if (!createNotes?.includes("[ALTERNATE_CHECKIN]")) {
+        if (isEmergencyAuditVisit) {
+            const existingEmergencyLine = /\[EMERGENCY_AUDIT\]:[^\n]*(?:\n|$)/i;
+            if (createNotes) createNotes = createNotes.replace(existingEmergencyLine, "").trim();
+            const emergencyLine = `[EMERGENCY_AUDIT]: ${cleanEmergencyReason} | ${cleanEmergencyRemark}`;
+            createNotes = createNotes ? `${emergencyLine}\n${createNotes}` : emergencyLine;
+        }
+
+        // Alternate check-in reason is carried forward for ordinary visits only.
+        if (!isEmergencyAuditVisit && !createNotes?.includes("[ALTERNATE_CHECKIN]")) {
             const startOfDay = new Date();
             startOfDay.setHours(0, 0, 0, 0);
             const altVisit = await prisma.visit.findFirst({
@@ -172,7 +217,9 @@ const createVisit = async (req, res) => {
                 userId,
                 siteId,
                 visitAt: parsedVisitAt,
-                reportType: typeof reportType === "string" && reportType.trim() ? reportType.trim() : null,
+                reportType: isEmergencyAuditVisit
+                    ? "Emergency Audit"
+                    : (typeof reportType === "string" && reportType.trim() ? reportType.trim() : null),
                 clientName: typeof clientName === "string" && clientName.trim() ? clientName.trim() : null,
                 branch: typeof branch === "string" && branch.trim() ? branch.trim() : null,
                 region: typeof region === "string" && region.trim() ? region.trim() : null,
