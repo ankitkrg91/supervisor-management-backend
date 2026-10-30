@@ -4,66 +4,57 @@ import prisma from "../config/prisma.js";
    HELPERS
 ========================================================= */
 
+const REPORT_TIME_ZONE = "Asia/Kolkata";
+
 const parseDateStart = (value) => {
-    if (!value) {
-        return null;
-    }
-
-    const date = new Date(
-        `${value}T00:00:00.000Z`
-    );
-
-    return Number.isNaN(date.getTime())
-        ? null
-        : date;
+    if (!value) return null;
+    const date = new Date(`${value}T00:00:00+05:30`);
+    return Number.isNaN(date.getTime()) ? null : date;
 };
 
 const parseDateEnd = (value) => {
-    if (!value) {
-        return null;
-    }
-
-    const date = new Date(
-        `${value}T23:59:59.999Z`
-    );
-
-    return Number.isNaN(date.getTime())
-        ? null
-        : date;
+    if (!value) return null;
+    const date = new Date(`${value}T23:59:59.999+05:30`);
+    return Number.isNaN(date.getTime()) ? null : date;
 };
 
 const formatDate = (value) => {
-    if (!value) {
-        return "-";
-    }
-
+    if (!value) return "-";
     const date = new Date(value);
-
-    if (Number.isNaN(date.getTime())) {
-        return "-";
-    }
-
-    return date.toLocaleDateString("en-IN");
+    if (Number.isNaN(date.getTime())) return "-";
+    return date.toLocaleDateString("en-IN", {
+        timeZone: REPORT_TIME_ZONE,
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+    });
 };
 
 const formatTime = (value) => {
-    if (!value) {
-        return "-";
-    }
-
+    if (!value) return "-";
     const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "-";
+    return date.toLocaleTimeString("en-IN", {
+        timeZone: REPORT_TIME_ZONE,
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+    });
+};
 
-    if (Number.isNaN(date.getTime())) {
-        return "-";
-    }
-
-    return date.toLocaleTimeString(
-        "en-IN",
-        {
-            hour: "2-digit",
-            minute: "2-digit",
-        }
-    );
+const formatDateTime = (value) => {
+    if (!value) return "-";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "-";
+    return date.toLocaleString("en-IN", {
+        timeZone: REPORT_TIME_ZONE,
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+    });
 };
 
 const extractDescriptionValue = (
@@ -101,101 +92,142 @@ const extractDescriptionValue = (
    TASK HELPERS
 ========================================================= */
 
-const getTaskClient = (task) => {
-    return (
-        extractDescriptionValue(
-            task?.description,
-            "Client"
-        ) || "-"
-    );
-};
+const getTaskClient = (task) => (
+    extractDescriptionValue(task?.description, "Client") ||
+    task?.site?.clientName ||
+    "-"
+);
 
-/*
- * IMPORTANT:
- *
- * Priority:
- * 1. Task.clientEmail
- * 2. Client Email saved inside description
- *
- * NEVER use:
- * task.assignedTo.email
- *
- * because that is Supervisor email.
- */
+// Client email is sourced only from the task/site client fields or task description.
+// It must never fall back to the supervisor's email.
 const getTaskClientEmail = (task) => {
-    const databaseEmail =
-        typeof task?.clientEmail === "string"
-            ? task.clientEmail.trim()
-            : "";
-
-    if (databaseEmail) {
-        return databaseEmail;
-    }
-
-    const descriptionEmail =
-        extractDescriptionValue(
-            task?.description,
-            "Client Email"
-        );
-
-    return descriptionEmail.trim() || "-";
+    const databaseEmail = typeof task?.clientEmail === "string"
+        ? task.clientEmail.trim()
+        : "";
+    const siteEmail = typeof task?.site?.clientEmail === "string"
+        ? task.site.clientEmail.trim()
+        : "";
+    const descriptionEmail = extractDescriptionValue(task?.description, "Client Email").trim();
+    return databaseEmail || siteEmail || descriptionEmail || "-";
 };
 
-const getTaskType = (task) => {
-    return (
-        extractDescriptionValue(
-            task?.description,
-            "Type"
-        ) ||
-        task?.title ||
-        "Task"
-    );
+const getTaskAddress = (task) => {
+    const street = extractDescriptionValue(task?.description, "Address") || task?.site?.address || "";
+    const parts = [street, task?.site?.city, task?.site?.state, task?.site?.pincode]
+        .filter(Boolean)
+        .filter((value, index, values) => values.findIndex((item) => String(item).trim().toLowerCase() === String(value).trim().toLowerCase()) === index);
+    return parts.join(", ") || "-";
 };
 
-const getTaskStatus = (task) => {
-    if (
-        task?.status === "SCHEDULED" &&
-        task?.scheduledAt &&
-        new Date(task.scheduledAt) <
-        new Date()
-    ) {
+const getTaskType = (task) => (
+    extractDescriptionValue(task?.description, "Type") ||
+    extractDescriptionValue(task?.description, "Category") ||
+    task?.title ||
+    "Task"
+);
+
+const parseScheduleRange = (description) => {
+    const match = String(description || "").match(/Schedule range:\s*(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})/i);
+    return match ? { start: match[1], end: match[2] } : null;
+};
+
+const parseIndiaDate = (dateText, timeSource = null, endOfDay = false) => {
+    if (!dateText) return null;
+    const time = timeSource instanceof Date && !Number.isNaN(timeSource.getTime())
+        ? timeSource.toLocaleTimeString("en-GB", { timeZone: REPORT_TIME_ZONE, hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })
+        : "00:00:00";
+    const date = new Date(`${dateText}T${endOfDay ? "23:59:59.999" : time}${endOfDay ? "+05:30" : "+05:30"}`);
+    return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const getTaskScheduleInfo = (task) => {
+    const scheduledAt = task?.scheduledAt ? new Date(task.scheduledAt) : null;
+    const validScheduledAt = scheduledAt && !Number.isNaN(scheduledAt.getTime()) ? scheduledAt : null;
+    const range = parseScheduleRange(task?.description);
+    const wholeDay = task?.wholeDay === true || /Scheduled for whole day\./i.test(String(task?.description || ""));
+
+    const startAt = range
+        ? parseIndiaDate(range.start, validScheduledAt, false)
+        : validScheduledAt;
+    const scheduledDateInIndia = validScheduledAt
+        ? new Intl.DateTimeFormat("en-CA", {
+            timeZone: REPORT_TIME_ZONE,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+        }).format(validScheduledAt)
+        : null;
+    const dueAt = range
+        ? parseIndiaDate(range.end, validScheduledAt, wholeDay)
+        : (wholeDay && scheduledDateInIndia
+            ? parseIndiaDate(scheduledDateInIndia, null, true)
+            : validScheduledAt);
+
+    return {
+        startAt,
+        dueAt,
+        wholeDay,
+        scheduledDate: formatDate(startAt),
+        scheduledTime: wholeDay ? "Whole Day" : formatTime(startAt),
+        dueDate: formatDate(dueAt),
+        dueTime: wholeDay ? "End of day" : formatTime(dueAt),
+    };
+};
+
+const getTaskStatus = (task, scheduleInfo = getTaskScheduleInfo(task)) => {
+    const status = String(task?.status || "SCHEDULED").toUpperCase();
+    if (status === "COMPLETED") return "Completed";
+    if (status === "IN_PROGRESS") return "In Progress";
+    if (status === "CANCELLED") return "Cancelled";
+    if (status === "SCHEDULED" && scheduleInfo.dueAt && scheduleInfo.dueAt.getTime() < Date.now()) {
         return "Missed";
     }
-
-    if (
-        task?.status ===
-        "IN_PROGRESS"
-    ) {
-        return "In Progress";
-    }
-
-    if (
-        task?.status ===
-        "COMPLETED"
-    ) {
-        return "Completed";
-    }
-
-    if (
-        task?.status ===
-        "CANCELLED"
-    ) {
-        return "Cancelled";
-    }
-
     return "Pending";
 };
 
 /* =========================================================
-   SITE HELPERS
+   VISIT / AUDIT HELPERS
 ========================================================= */
 
-const getRegion = (site) => {
-    return site?.state || "-";
+const getRegion = (site) => site?.state || "-";
+const getBranch = (site) => site?.city || "-";
+
+const getSiteAddress = (site) => [
+    site?.address,
+    site?.city,
+    site?.state,
+    site?.pincode,
+].filter(Boolean).join(", ") || "-";
+
+const getMapUrl = (latitude, longitude, address) => {
+    const lat = Number(latitude);
+    const lng = Number(longitude);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)) {
+        return `https://www.google.com/maps?q=${lat},${lng}`;
+    }
+    if (address && address !== "-") {
+        return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+    }
+    return null;
 };
 
-const getBranch = (site) => {
-    return site?.city || "-";
+const getTaskIdFromVisit = (visit) => {
+    const notes = String(visit?.notes || "");
+    const match = notes.match(/Task ID:\s*([a-f0-9-]{36})/i);
+    return match?.[1] || null;
+};
+
+const getSiteEvidence = (notes) => {
+    const match = String(notes || "").match(/\[SITE_EVIDENCE\]:\s*(\{[\s\S]*?\})/);
+    if (!match) return {};
+    try { return JSON.parse(match[1]); } catch { return {}; }
+};
+
+const normalizeVisitStatus = (status) => {
+    const value = String(status || "PENDING").toUpperCase();
+    if (value === "VERIFIED") return "Verified";
+    if (value === "UNVERIFIED" || value === "REJECTED") return "Unverified";
+    return "Pending Review";
 };
 
 /* =========================================================
@@ -225,6 +257,15 @@ const matchesSearch = (
         row?.type,
         row?.status,
         row?.distance,
+        row?.taskId,
+        row?.taskTitle,
+        row?.taskType,
+        row?.createdBy,
+        row?.address,
+        row?.scheduledDate,
+        row?.dueDate,
+        row?.visitStatus,
+        row?.checkInStatus,
     ]
         .join(" ")
         .toLowerCase()
@@ -308,55 +349,188 @@ const matchesCommonFilters = (
 ========================================================= */
 const buildTaskReport = async () => {
     const tasks = await prisma.task.findMany({
-        select: {
-            id: true,
-            title: true,
-            description: true,
-            clientEmail: true,
-            status: true,
-            scheduledAt: true,
-            assignedToId: true,
-            assignedTo: {
-                select: { id: true, name: true, phone: true },
-            },
+        include: {
+            assignedTo: { select: { id: true, name: true, phone: true, email: true } },
+            assignedBy: { select: { id: true, name: true } },
             site: {
-                select: { id: true, name: true, city: true, state: true },
+                select: {
+                    id: true, name: true, siteCode: true, clientName: true,
+                    clientEmail: true, address: true, city: true, state: true,
+                    pincode: true, latitude: true, longitude: true,
+                },
             },
         },
-        orderBy: { scheduledAt: "desc" },
-    });
-
-    const taskUserIds = [...new Set(tasks.map((t) => t.assignedToId).filter(Boolean))];
-    const taskSiteIds = [...new Set(tasks.map((t) => t.site?.id).filter(Boolean))];
-
-    const taskCheckIns = await prisma.checkInOut.findMany({
-        where: {
-            userId: { in: taskUserIds },
-            siteId: { in: taskSiteIds },
-        },
-        orderBy: { checkInAt: "desc" },
+        orderBy: { createdAt: "desc" },
     });
 
     return tasks.map((task) => {
-        const matched = taskCheckIns.find(
-            (ci) => ci.userId === task.assignedToId && ci.siteId === task.site?.id
-        );
-
+        const schedule = getTaskScheduleInfo(task);
+        const address = getTaskAddress(task) !== "-" ? getTaskAddress(task) : getSiteAddress(task.site);
+        const mapUrl = getMapUrl(task.site?.latitude, task.site?.longitude, address);
         return {
             id: task.id,
-            rawDate: task.scheduledAt,
-            date: formatDate(task.scheduledAt),
+            taskId: task.id,
+            rawDate: task.createdAt || task.scheduledAt,
+            date: formatDate(task.createdAt || task.scheduledAt),
+            createdAt: task.createdAt,
+            createdDate: formatDate(task.createdAt),
+            createdTime: formatTime(task.createdAt),
+            createdBy: task.assignedBy?.name || "-",
             user: task.assignedTo?.name || "-",
+            supervisorId: task.assignedTo?.id || null,
+            supervisorPhone: task.assignedTo?.phone || "-",
+            supervisorEmail: task.assignedTo?.email || "-",
             client: getTaskClient(task),
             clientEmail: getTaskClientEmail(task),
             site: task.site?.name || "-",
+            siteCode: task.site?.siteCode || "-",
+            address,
+            latitude: task.site?.latitude ?? null,
+            longitude: task.site?.longitude ?? null,
+            mapUrl,
             type: getTaskType(task),
-            status: getTaskStatus(task),
-            checkIn: matched ? formatTime(matched.checkInAt) : "-",
-            checkOut: matched?.checkOutAt ? formatTime(matched.checkOutAt) : "-",
-            distance: matched?.distanceTravelled ? matched.distanceTravelled.toFixed(2) : "0.00",
+            taskType: getTaskType(task),
+            taskTitle: task.title || "-",
+            priority: task.priority || "MEDIUM",
+            status: getTaskStatus(task, schedule),
+            rawStatus: task.status,
+            scheduledAt: task.scheduledAt,
+            scheduledDate: schedule.scheduledDate,
+            scheduledTime: schedule.scheduledTime,
+            dueAt: schedule.dueAt,
+            dueDate: schedule.dueDate,
+            dueTime: schedule.dueTime,
+            completedAt: task.completedAt,
+            completedDateTime: formatDateTime(task.completedAt),
+            description: task.description || "",
+            checkIn: "-",
+            checkOut: "-",
+            distance: "0.00",
             region: getRegion(task.site),
             branch: getBranch(task.site),
+        };
+    });
+};
+
+const buildMissedTaskReport = async () => {
+    const tasks = await buildTaskReport();
+    return tasks
+        .filter((task) => task.status === "Missed")
+        .map((task) => ({
+            ...task,
+            rawDate: task.dueAt || task.scheduledAt,
+            date: task.dueDate || task.date,
+            missedDateTime: task.dueAt ? formatDateTime(task.dueAt) : "-",
+        }));
+};
+
+/* =========================================================
+   VISIT ENRICHMENT (TASK, CHECK-IN, PHOTO & LOCATION)
+========================================================= */
+const enrichVisits = async (visits) => {
+    const userIds = [...new Set(visits.map((visit) => visit.userId).filter(Boolean))];
+    const siteIds = [...new Set(visits.map((visit) => visit.siteId).filter(Boolean))];
+    const taskIds = [...new Set(visits.map(getTaskIdFromVisit).filter(Boolean))];
+
+    const [tasks, checkIns] = await Promise.all([
+        taskIds.length
+            ? prisma.task.findMany({
+                where: { id: { in: taskIds } },
+                include: {
+                    site: {
+                        select: {
+                            id: true, name: true, siteCode: true, clientName: true,
+                            clientEmail: true, address: true, city: true, state: true,
+                            pincode: true, latitude: true, longitude: true,
+                        },
+                    },
+                },
+            })
+            : Promise.resolve([]),
+        userIds.length && siteIds.length
+            ? prisma.checkInOut.findMany({
+                where: { userId: { in: userIds }, siteId: { in: siteIds } },
+                orderBy: { checkInAt: "desc" },
+            })
+            : Promise.resolve([]),
+    ]);
+
+    const taskMap = new Map(tasks.map((task) => [task.id, task]));
+    const checkInsByPair = new Map();
+    for (const checkIn of checkIns) {
+        const key = `${checkIn.userId}:${checkIn.siteId}`;
+        if (!checkInsByPair.has(key)) checkInsByPair.set(key, []);
+        checkInsByPair.get(key).push(checkIn);
+    }
+
+    return visits.map((visit) => {
+        const taskId = getTaskIdFromVisit(visit);
+        const task = taskId ? taskMap.get(taskId) : null;
+        const dayKey = new Date(visit.visitAt).toLocaleDateString("en-CA", { timeZone: REPORT_TIME_ZONE });
+        const candidates = checkInsByPair.get(`${visit.userId}:${visit.siteId}`) || [];
+        const sameDay = candidates.filter((item) => (
+            new Date(item.checkInAt).toLocaleDateString("en-CA", { timeZone: REPORT_TIME_ZONE }) === dayKey
+        ));
+        const matchedCheckIn = sameDay.length
+            ? sameDay.reduce((best, current) => {
+                const bestDiff = Math.abs(new Date(best.checkInAt).getTime() - new Date(visit.visitAt).getTime());
+                const currentDiff = Math.abs(new Date(current.checkInAt).getTime() - new Date(visit.visitAt).getTime());
+                return currentDiff < bestDiff ? current : best;
+            })
+            : null;
+
+        const evidence = getSiteEvidence(visit.notes);
+        const checkInPhotoUrl = evidence.selfie || evidence.selfiePhoto || visit.photoUrl || null;
+        const site = visit.site || task?.site || null;
+        const address = getSiteAddress(site);
+        const latitude = matchedCheckIn?.checkInLatitude ?? visit.latitude ?? site?.latitude ?? null;
+        const longitude = matchedCheckIn?.checkInLongitude ?? visit.longitude ?? site?.longitude ?? null;
+        const mapUrl = getMapUrl(latitude, longitude, address);
+        const taskType = task ? getTaskType(task) : (visit.reportType || "Visit");
+
+        return {
+            id: visit.id,
+            visitId: visit.id,
+            taskId: task?.id || taskId || null,
+            rawDate: visit.visitAt,
+            date: formatDate(visit.visitAt),
+            dateTime: formatDateTime(visit.visitAt),
+            user: visit.user?.name || "-",
+            supervisorId: visit.user?.id || visit.userId || null,
+            client: task
+                ? getTaskClient(task)
+                : (visit.clientName || site?.clientName || "-"),
+            clientEmail: getTaskClientEmail(task) !== "-" ? getTaskClientEmail(task) : (site?.clientEmail || "-"),
+            site: site?.name || "-",
+            siteCode: site?.siteCode || "-",
+            address,
+            latitude,
+            longitude,
+            mapUrl,
+            type: taskType,
+            taskType,
+            taskTitle: task?.title || "-",
+            scheduledDate: task ? getTaskScheduleInfo(task).scheduledDate : "-",
+            scheduledTime: task ? getTaskScheduleInfo(task).scheduledTime : "-",
+            dueDate: task ? getTaskScheduleInfo(task).dueDate : "-",
+            status: normalizeVisitStatus(visit.status),
+            visitStatus: normalizeVisitStatus(visit.status),
+            checkIn: matchedCheckIn ? formatDateTime(matchedCheckIn.checkInAt) : "-",
+            checkOut: matchedCheckIn?.checkOutAt ? formatDateTime(matchedCheckIn.checkOutAt) : "-",
+            checkInAt: matchedCheckIn?.checkInAt || null,
+            checkOutAt: matchedCheckIn?.checkOutAt || null,
+            checkInId: matchedCheckIn?.id || null,
+            checkInStatus: matchedCheckIn ? (matchedCheckIn.checkOutAt ? "Checked Out" : "Checked In") : "No Check-In Linked",
+            checkInPhotoUrl,
+            photoUrl: visit.photoUrl || null,
+            reportPhotoUrl: visit.photoUrl || checkInPhotoUrl,
+            checkInLatitude: matchedCheckIn?.checkInLatitude ?? null,
+            checkInLongitude: matchedCheckIn?.checkInLongitude ?? null,
+            distance: matchedCheckIn?.distanceTravelled ? Number(matchedCheckIn.distanceTravelled).toFixed(2) : "0.00",
+            reportType: visit.reportType || "Visit",
+            notes: visit.notes || "",
+            region: getRegion(site),
+            branch: getBranch(site),
         };
     });
 };
@@ -367,45 +541,18 @@ const buildTaskReport = async () => {
 const buildVisitReport = async () => {
     const visits = await prisma.visit.findMany({
         include: {
-            user: { select: { id: true, name: true, phone: true } },
-            site: { select: { id: true, name: true, city: true, state: true } },
+            user: { select: { id: true, name: true, phone: true, email: true } },
+            site: {
+                select: {
+                    id: true, name: true, siteCode: true, clientName: true,
+                    clientEmail: true, address: true, city: true, state: true,
+                    pincode: true, latitude: true, longitude: true,
+                },
+            },
         },
         orderBy: { visitAt: "desc" },
     });
-
-    const visitUserIds = [...new Set(visits.map((v) => v.userId).filter(Boolean))];
-    const visitSiteIds = [...new Set(visits.map((v) => v.siteId).filter(Boolean))];
-
-    const visitCheckIns = await prisma.checkInOut.findMany({
-        where: {
-            userId: { in: visitUserIds },
-            siteId: { in: visitSiteIds },
-        },
-        orderBy: { checkInAt: "desc" },
-    });
-
-    return visits.map((visit) => {
-        const matched = visitCheckIns.find(
-            (ci) => ci.userId === visit.userId && ci.siteId === visit.siteId
-        );
-
-        return {
-            id: visit.id,
-            rawDate: visit.visitAt,
-            date: formatDate(visit.visitAt),
-            user: visit.user?.name || "-",
-            client: visit.clientName || "-",
-            site: visit.site?.name || "-",
-            type: visit.reportType || "Visit",
-            status: visit.status,
-            checkIn: matched ? formatTime(matched.checkInAt) : "-",
-            checkOut: matched?.checkOutAt ? formatTime(matched.checkOutAt) : "-",
-            photoUrl: visit.photoUrl || null,
-            distance: matched?.distanceTravelled ? matched.distanceTravelled.toFixed(2) : "0.00",
-            region: getRegion(visit.site),
-            branch: getBranch(visit.site),
-        };
-    });
+    return enrichVisits(visits);
 };
 
 /* =========================================================
@@ -416,144 +563,55 @@ const buildAuditReport = async () => {
         include: {
             visit: {
                 include: {
-                    user: { select: { id: true, name: true, phone: true } },
-                    site: { select: { id: true, name: true, city: true, state: true } },
+                    user: { select: { id: true, name: true, phone: true, email: true } },
+                    site: {
+                        select: {
+                            id: true, name: true, siteCode: true, clientName: true,
+                            clientEmail: true, address: true, city: true, state: true,
+                            pincode: true, latitude: true, longitude: true,
+                        },
+                    },
                 },
             },
             template: { select: { id: true, name: true } },
+            answers: { select: { id: true } },
         },
         orderBy: { submittedAt: "desc" },
     });
 
-    const auditUserIds = [...new Set(submissions.map((s) => s.visit?.userId).filter(Boolean))];
-    const auditSiteIds = [...new Set(submissions.map((s) => s.visit?.siteId).filter(Boolean))];
-
-    const auditCheckIns = await prisma.checkInOut.findMany({
-        where: {
-            userId: { in: auditUserIds },
-            siteId: { in: auditSiteIds },
-        },
-        orderBy: { checkInAt: "desc" },
-    });
+    const visits = submissions.map((submission) => submission.visit).filter(Boolean);
+    const enriched = await enrichVisits(visits);
+    const visitRows = new Map(enriched.map((row) => [row.visitId, row]));
 
     return submissions.map((submission) => {
         const visit = submission.visit;
-        const matched = auditCheckIns.find(
-            (ci) => ci.userId === visit?.userId && ci.siteId === visit?.siteId
-        );
-
+        const base = visit ? visitRows.get(visit.id) : null;
+        const reviewPath = visit?.id ? `/audit-view/${encodeURIComponent(visit.id)}` : null;
+        const status = normalizeVisitStatus(visit?.status);
         return {
+            ...(base || {}),
             id: submission.id,
             visitId: visit?.id || null,
             rawDate: submission.submittedAt,
             date: formatDate(submission.submittedAt),
-            user: visit?.user?.name || "-",
-            client: visit?.clientName || "-",
-            site: visit?.site?.name || "-",
-            type: submission?.template?.name || "Audit",
-            status: visit?.status || "PENDING",
-            checkIn: matched ? formatTime(matched.checkInAt) : "-",
-            checkOut: matched?.checkOutAt ? formatTime(matched.checkOutAt) : "-",
-            photoUrl: visit?.photoUrl || null,
-            distance: matched?.distanceTravelled ? matched.distanceTravelled.toFixed(2) : "0.00",
+            dateTime: formatDateTime(submission.submittedAt),
+            visitDateTime: visit?.visitAt ? formatDateTime(visit.visitAt) : "-",
+            user: visit?.user?.name || base?.user || "-",
+            client: base?.client || visit?.clientName || "-",
+            site: visit?.site?.name || base?.site || "-",
+            type: base?.taskType || submission.template?.name || visit?.reportType || "Audit",
+            taskType: base?.taskType || visit?.reportType || submission.template?.name || "Audit",
+            status,
+            auditStatus: status,
+            templateName: submission.template?.name || "Audit",
+            answerCount: Array.isArray(submission.answers) ? submission.answers.length : 0,
+            submittedAt: submission.submittedAt,
+            auditReviewUrl: reviewPath,
             region: getRegion(visit?.site),
             branch: getBranch(visit?.site),
         };
     });
 };
-/* =========================================================
-   CHECK-IN / CHECK-OUT REPORT
-========================================================= */
-
-const buildCheckInReport =
-    async () => {
-        const checkIns =
-            await prisma.checkInOut.findMany(
-                {
-                    include: {
-                        user: {
-                            select: {
-                                id: true,
-                                name: true,
-                                phone: true,
-                            },
-                        },
-
-                        site: {
-                            select: {
-                                id: true,
-                                name: true,
-                                city: true,
-                                state: true,
-                            },
-                        },
-                    },
-
-                    orderBy: {
-                        checkInAt:
-                            "desc",
-                    },
-                }
-            );
-
-        return checkIns.map(
-            (checkIn) => ({
-                id:
-                    checkIn.id,
-
-                rawDate:
-                    checkIn.checkInAt,
-
-                date:
-                    formatDate(
-                        checkIn.checkInAt
-                    ),
-
-                user:
-                    checkIn.user?.name ||
-                    "-",
-
-                client:
-                    "-",
-
-                site:
-                    checkIn.site?.name ||
-                    "-",
-
-                type:
-                    "Field Visit",
-
-                status:
-                    "Present",
-
-                checkIn:
-                    formatTime(
-                        checkIn.checkInAt
-                    ),
-
-                checkOut:
-                    formatTime(
-                        checkIn.checkOutAt
-                    ),
-
-                distance:
-                    Number(
-                        checkIn.distanceTravelled ||
-                        0
-                    ).toFixed(2),
-
-                region:
-                    getRegion(
-                        checkIn.site
-                    ),
-
-                branch:
-                    getBranch(
-                        checkIn.site
-                    ),
-            })
-        );
-    };
 
 /* =========================================================
    FIELD FORCE PERFORMANCE
@@ -1023,7 +1081,7 @@ const getReport = async (
             "Task Report",
             "Visit Report",
             "Audit Report",
-            "Check-In / Check-Out Report",
+            "Missed Task Report",
             "Field Force Performance",
             "Distance Report",
         ];
@@ -1173,10 +1231,10 @@ const getReport = async (
                 await buildAuditReport();
         } else if (
             type ===
-            "Check-In / Check-Out Report"
+            "Missed Task Report"
         ) {
             rows =
-                await buildCheckInReport();
+                await buildMissedTaskReport();
         } else if (
             type ===
             "Field Force Performance"
@@ -1236,6 +1294,9 @@ const getReport = async (
                     row.status ===
                     "Missed"
             ).length;
+        const auditVerifiedCount = filteredRows.filter((row) => row.status === "Verified").length;
+        const auditUnverifiedCount = filteredRows.filter((row) => row.status === "Unverified").length;
+        const auditPendingCount = filteredRows.filter((row) => row.status === "Pending Review").length;
 
         const totalDistance =
             filteredRows.reduce(
@@ -1392,6 +1453,15 @@ const getReport = async (
 
                         missed:
                             missedCount,
+
+                        auditVerified:
+                            auditVerifiedCount,
+
+                        auditUnverified:
+                            auditUnverifiedCount,
+
+                        auditPending:
+                            auditPendingCount,
 
                         totalDistance:
                             Number(
