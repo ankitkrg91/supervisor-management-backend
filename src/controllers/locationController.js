@@ -278,7 +278,7 @@ const getLatestLocations = async (req, res) => {
 
         const now = Date.now();
         const ONLINE_THRESHOLD_MS =
-            5 * 60 * 1000;
+            2 * 60 * 1000;
 
         const locations =
             await Promise.all(
@@ -427,7 +427,7 @@ const getTrackedFieldForce = async (
         const now = Date.now();
 
         const ONLINE_THRESHOLD_MS =
-            5 * 60 * 1000;
+            2 * 60 * 1000;
 
         const trackedFieldForce =
             await Promise.all(
@@ -1262,7 +1262,7 @@ const getDailyRoute = async (req, res) => {
             });
         }
 
-        const isOnline = locationLogs.length > 0 && (Date.now() - new Date(locationLogs[locationLogs.length - 1].recordedAt).getTime()) < 15 * 60 * 1000;
+        const isOnline = locationLogs.length > 0 && (Date.now() - new Date(locationLogs[locationLogs.length - 1].recordedAt).getTime()) < 12 * 60 * 1000;
 
         return res.status(200).json({
             success: true,
@@ -1363,3 +1363,6 @@ export {
     getSupervisorDailyBreakdown,
     setSocketIO,
 };
+
+dashboardController
+JS

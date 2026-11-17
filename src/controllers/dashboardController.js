@@ -1,6 +1,6 @@
 import prisma from "../config/prisma.js";
 
-const ONLINE_THRESHOLD_MS = 5 * 60 * 1000;
+const ONLINE_THRESHOLD_MS = 2 * 60 * 1000;
 
 // ============================================================
 // DATE HELPERS
