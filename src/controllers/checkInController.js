@@ -46,6 +46,46 @@ const extractSelfieFromVisit = (visit) => {
     return null;
 };
 
+const extractCheckOutSelfieFromVisit = (visit) => {
+    if (!visit) return null;
+
+    if (visit.notes && typeof visit.notes === "string") {
+        try {
+            const m = visit.notes.match(
+                /\[SITE_EVIDENCE\]:\s*(\{[\s\S]*?\})/
+            );
+
+            if (m) {
+                const ev = JSON.parse(m[1]);
+                const outPhoto =
+                    ev.checkOutSelfie ||
+                    ev.checkoutSelfie ||
+                    ev.selfieOut ||
+                    ev.checkOutPhoto ||
+                    ev.checkOutPhotoUrl;
+
+                if (
+                    outPhoto &&
+                    typeof outPhoto === "string" &&
+                    outPhoto.trim().length > 0
+                ) {
+                    return outPhoto.trim();
+                }
+            }
+        } catch (_) { }
+
+        try {
+            const m2 = visit.notes.match(
+                /\[CHECKOUT_SELFIE\]:\s*(data:image\/[^\s\n]+|https?:\/\/[^\s\n]+)/
+            );
+
+            if (m2) return m2[1].trim();
+        } catch (_) { }
+    }
+
+    return null;
+};
+
 /*
  * ============================================================
  * CREATE CHECK-IN
@@ -340,7 +380,7 @@ const createCheckIn = async (req, res) => {
             });
         }
 
-// Remaining createCheckIn implementation continues in Part 2.
+        // Remaining createCheckIn implementation continues in Part 2.
 
         // Record check-in visit note with reason if Alternate
         try {
@@ -634,6 +674,24 @@ const getCheckIns = async (req, res) => {
                 }
 
                 const selfie = extractSelfieFromVisit(visit);
+                let checkOutSelfie = extractCheckOutSelfieFromVisit(visit);
+                if (!checkOutSelfie) {
+                    const outVisit = await prisma.visit.findFirst({
+                        where: {
+                            userId: ci.userId,
+                            siteId: ci.siteId,
+                            visitAt: { gte: dayStart, lte: dayEnd },
+                            OR: [
+                                { notes: { contains: "[CHECKOUT_SELFIE]" } },
+                                { notes: { contains: "checkOutSelfie" } },
+                            ],
+                        },
+                        orderBy: { visitAt: "desc" },
+                    });
+                    if (outVisit) {
+                        checkOutSelfie = extractCheckOutSelfieFromVisit(outVisit);
+                    }
+                }
 
                 // Check whether alternate check-in note is present
                 let isAlternate = false;
@@ -763,6 +821,8 @@ const getCheckIns = async (req, res) => {
                 return {
                     ...ci,
                     checkInPhotoUrl: selfie,
+                    checkOutPhotoUrl: checkOutSelfie,
+                    selfieOut: checkOutSelfie,
                     isAlternate,
                     alternateReason,
                     isEmergencyAudit: Boolean(emergencyAuditVisit),
@@ -807,7 +867,29 @@ const checkOut = async (req, res) => {
     try {
         const userId = req.user.userId;
         const { id } = req.params;
-        const { latitude, longitude } = req.body;
+        const {
+            latitude,
+            longitude,
+            photoUrl,
+            checkOutPhotoUrl,
+            selfieUrl,
+            selfie,
+            photo,
+            image,
+        } = req.body;
+
+        const rawCheckOutPhoto =
+            photoUrl ||
+            checkOutPhotoUrl ||
+            selfieUrl ||
+            selfie ||
+            photo ||
+            image ||
+            null;
+        const cleanCheckOutPhoto =
+            typeof rawCheckOutPhoto === "string" && rawCheckOutPhoto.trim().length > 0
+                ? rawCheckOutPhoto.trim()
+                : null;
 
         const checkIn = await prisma.checkInOut.findFirst({
             where: {
@@ -925,6 +1007,84 @@ const checkOut = async (req, res) => {
             },
         });
 
+        // Save check-out selfie photo into the matching visit notes if provided
+        if (cleanCheckOutPhoto) {
+            try {
+                const checkInDate = new Date(checkIn.checkInAt);
+                const dayStart = new Date(checkInDate);
+                dayStart.setHours(0, 0, 0, 0);
+                const dayEnd = new Date();
+                dayEnd.setHours(23, 59, 59, 999);
+
+                let targetVisit = await prisma.visit.findFirst({
+                    where: {
+                        userId,
+                        siteId: checkIn.siteId,
+                        visitAt: { gte: dayStart, lte: dayEnd },
+                    },
+                    orderBy: { visitAt: "desc" },
+                });
+
+                if (!targetVisit) {
+                    targetVisit = await prisma.visit.findFirst({
+                        where: {
+                            userId,
+                            siteId: checkIn.siteId,
+                        },
+                        orderBy: { visitAt: "desc" },
+                    });
+                }
+
+                if (targetVisit) {
+                    let updatedNotes = targetVisit.notes || "";
+                    const evMatch = updatedNotes.match(/\[SITE_EVIDENCE\]:\s*(\{[\s\S]*?\})/);
+                    if (evMatch) {
+                        try {
+                            const evObj = JSON.parse(evMatch[1]);
+                            evObj.checkOutSelfie = cleanCheckOutPhoto;
+                            updatedNotes = updatedNotes.replace(
+                                evMatch[0],
+                                `[SITE_EVIDENCE]: ${JSON.stringify(evObj)}`
+                            );
+                        } catch (_) { }
+                    }
+                    if (!updatedNotes.includes("[CHECKOUT_SELFIE]:")) {
+                        updatedNotes = `${updatedNotes}\n[CHECKOUT_SELFIE]: ${cleanCheckOutPhoto}`.trim();
+                    } else {
+                        updatedNotes = updatedNotes.replace(
+                            /\[CHECKOUT_SELFIE\]:\s*[^\n]+/,
+                            `[CHECKOUT_SELFIE]: ${cleanCheckOutPhoto}`
+                        );
+                    }
+
+                    await prisma.visit.update({
+                        where: { id: targetVisit.id },
+                        data: { notes: updatedNotes },
+                    });
+                } else {
+                    const evJson = JSON.stringify({
+                        selfie: "",
+                        checkOutSelfie: cleanCheckOutPhoto,
+                    });
+                    await prisma.visit.create({
+                        data: {
+                            userId,
+                            siteId: checkIn.siteId,
+                            visitAt: new Date(),
+                            reportType: "Site Check-Out",
+                            latitude: parsedCheckoutLatitude,
+                            longitude: parsedCheckoutLongitude,
+                            photoUrl: cleanCheckOutPhoto,
+                            status: "VERIFIED",
+                            notes: `[SITE_EVIDENCE]: ${evJson}\n[CHECKOUT_SELFIE]: ${cleanCheckOutPhoto}`,
+                        },
+                    });
+                }
+            } catch (errOutPhoto) {
+                console.error("Failed to persist check-out selfie:", errOutPhoto);
+            }
+        }
+
         sendAuditCompletionEmail({
             checkInId: updatedCheckIn.id,
         })
@@ -942,7 +1102,11 @@ const checkOut = async (req, res) => {
             success: true,
             message: "Check-out successful",
             data: {
-                checkIn: updatedCheckIn,
+                checkIn: {
+                    ...updatedCheckIn,
+                    checkOutPhotoUrl: cleanCheckOutPhoto,
+                    selfieOut: cleanCheckOutPhoto,
+                },
             },
         });
     } catch (error) {
@@ -1034,6 +1198,7 @@ const getCheckInById = async (req, res) => {
         }
 
         const selfie = extractSelfieFromVisit(visit);
+        const checkOutSelfie = extractCheckOutSelfieFromVisit(visit);
 
         let isAlternate = false;
         let alternateReason = null;
@@ -1110,6 +1275,8 @@ const getCheckInById = async (req, res) => {
                 checkIn: {
                     ...checkIn,
                     checkInPhotoUrl: selfie,
+                    checkOutPhotoUrl: checkOutSelfie,
+                    selfieOut: checkOutSelfie,
                     isAlternate,
                     alternateReason,
                 },

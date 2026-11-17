@@ -1165,6 +1165,25 @@ const getDailyRoute = async (req, res) => {
             return v.photoUrl || null;
         };
 
+        const extractCheckOutSelfieFromVisit = (v) => {
+            if (!v) return null;
+            if (v.notes && typeof v.notes === "string") {
+                const match = v.notes.match(/\[SITE_EVIDENCE\]:\s*(\{[\s\S]*?\})/);
+                if (match) {
+                    try {
+                        const parsed = JSON.parse(match[1]);
+                        const outPhoto = parsed.checkOutSelfie || parsed.checkoutSelfie || parsed.selfieOut || parsed.checkOutPhoto || parsed.checkOutPhotoUrl;
+                        if (outPhoto && typeof outPhoto === "string" && outPhoto.trim().length > 0) {
+                            return outPhoto.trim();
+                        }
+                    } catch (e) { }
+                }
+                const m2 = v.notes.match(/\[CHECKOUT_SELFIE\]:\s*(data:image\/[^\s\n]+|https?:\/\/[^\s\n]+)/);
+                if (m2) return m2[1].trim();
+            }
+            return null;
+        };
+
         const stops = [];
         let stopNumber = 1;
 
@@ -1181,6 +1200,7 @@ const getDailyRoute = async (req, res) => {
         for (const ci of checkIns) {
             const matchingVisit = visits.find((v) => v.siteId === ci.siteId) || visits[0];
             const selfie = extractSelfieFromVisit(matchingVisit);
+            const selfieOut = extractCheckOutSelfieFromVisit(matchingVisit);
 
             let isAlternate = dayHasAlternate;
             let alternateReason = dayAlternateReason;
@@ -1216,7 +1236,8 @@ const getDailyRoute = async (req, res) => {
                 checkInAddress: ci.site?.address || "Site GPS Verified",
                 checkOutAddress: ci.checkOutAt ? (ci.site?.address || "Site Check-out") : "NA (Currently Active)",
                 selfieIn: selfie,
-                selfieOut: null,
+                selfieOut: selfieOut,
+                checkOutPhotoUrl: selfieOut,
                 distanceTravelled: ci.distanceTravelled != null ? `${Number(ci.distanceTravelled).toFixed(2)} KM` : `${totalDistanceKm.toFixed(2)} KM`,
                 isAlternate,
                 alternateReason,
