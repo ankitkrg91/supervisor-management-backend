@@ -98,7 +98,6 @@ const createVisit = async (req, res) => {
             }
         }
 
-        // A standalone emergency audit is not linked to, or blocked by, a scheduled task.
         const taskId = isEmergencyAuditVisit ? null : extractTaskIdFromNotes(cleanNotes);
         let assignedTask = null;
 
@@ -132,8 +131,6 @@ const createVisit = async (req, res) => {
         const cleanPhotoUrl = typeof photoUrl === "string" && photoUrl.trim() ? photoUrl.trim() : null;
         const cleanPhotoFileId = typeof photoFileId === "string" && photoFileId.trim() ? photoFileId.trim() : null;
 
-        // Normal visits may update today's existing check-in evidence. Every emergency
-        // audit must create its own immutable visit row, even on the same site/day.
         let existingVisit = null;
         if (!isEmergencyAuditVisit) {
             if (taskId) {
@@ -162,11 +159,16 @@ const createVisit = async (req, res) => {
             if (parsedLongitude !== null) updateData.longitude = parsedLongitude;
             if (cleanNotes) {
                 let finalNotes = cleanNotes;
-                // Preserve [ALTERNATE_CHECKIN] tag if already present on this visit
                 if (existingVisit.notes && existingVisit.notes.includes("[ALTERNATE_CHECKIN]") && !finalNotes.includes("[ALTERNATE_CHECKIN]")) {
                     const match = existingVisit.notes.match(/\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/);
                     if (match) {
                         finalNotes = `${finalNotes}\n[ALTERNATE_CHECKIN]: ${match[1]}`;
+                    }
+                }
+                if (existingVisit.notes && existingVisit.notes.includes("[CHECKOUT_SELFIE]") && !finalNotes.includes("[CHECKOUT_SELFIE]")) {
+                    const mOut = existingVisit.notes.match(/\[CHECKOUT_SELFIE\]:\s*([^\n]+)/);
+                    if (mOut) {
+                        finalNotes = `${finalNotes}\n[CHECKOUT_SELFIE]: ${mOut[1]}`;
                     }
                 }
                 updateData.notes = finalNotes;
@@ -187,8 +189,6 @@ const createVisit = async (req, res) => {
             });
         }
 
-        // Make emergency metadata explicit in Notes so existing detail/report views
-        // can recognise it without a database migration.
         let createNotes = cleanNotes;
         if (isEmergencyAuditVisit) {
             const existingEmergencyLine = /\[EMERGENCY_AUDIT\]:[^\n]*(?:\n|$)/i;
@@ -197,7 +197,6 @@ const createVisit = async (req, res) => {
             createNotes = createNotes ? `${emergencyLine}\n${createNotes}` : emergencyLine;
         }
 
-        // Alternate check-in reason is carried forward for ordinary visits only.
         if (!isEmergencyAuditVisit && !createNotes?.includes("[ALTERNATE_CHECKIN]")) {
             const startOfDay = new Date();
             startOfDay.setHours(0, 0, 0, 0);
@@ -270,9 +269,22 @@ const getVisits = async (req, res) => {
             if (to) where.visitAt.lte = new Date(`${to}T23:59:59.999Z`);
         }
 
+        // Sirf wahi visits dikhao jinme Audit submit hua hai (Check-in/Check-out only records ko hide rakho)
+        const auditOnlyFilter = {
+            OR: [
+                { auditSubmission: { isNot: null } },
+                { notes: { contains: "[VINICA_VSF_REPORT]:" } },
+                { notes: { contains: "[EMERGENCY_AUDIT]:" } },
+                { reportType: { contains: "VSF", mode: "insensitive" } },
+                { reportType: { contains: "Emergency Audit", mode: "insensitive" } },
+            ],
+        };
+
+        where.AND = [auditOnlyFilter];
+
         if (search && search.trim()) {
             const q = search.trim();
-            where.AND = [{
+            where.AND.push({
                 OR: [
                     { user: { name: { contains: q, mode: "insensitive" } } },
                     { user: { email: { contains: q, mode: "insensitive" } } },
@@ -280,7 +292,7 @@ const getVisits = async (req, res) => {
                     { site: { siteCode: { contains: q, mode: "insensitive" } } },
                     { clientName: { contains: q, mode: "insensitive" } },
                 ],
-            }];
+            });
         }
 
         const pageNumber = Math.max(parseInt(page, 10) || 1, 1);
