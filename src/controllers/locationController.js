@@ -7,6 +7,69 @@ const setSocketIO = (socketIO) => {
 };
 
 /* =========================================================
+   IST TIMEZONE HELPERS (Asia/Kolkata)
+========================================================= */
+
+const IST_TIME_ZONE = "Asia/Kolkata";
+
+const getISTDateStr = (date = new Date()) => {
+    const d = date instanceof Date ? date : new Date(date);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleDateString("en-CA", { timeZone: IST_TIME_ZONE });
+};
+
+const parseISTStartOfDay = (dateStr) => {
+    const clean = (dateStr || getISTDateStr()).trim();
+    const d = new Date(`${clean}T00:00:00.000+05:30`);
+    return Number.isNaN(d.getTime()) ? new Date(`${getISTDateStr()}T00:00:00.000+05:30`) : d;
+};
+
+const parseISTEndOfDay = (dateStr) => {
+    const clean = (dateStr || getISTDateStr()).trim();
+    const d = new Date(`${clean}T23:59:59.999+05:30`);
+    return Number.isNaN(d.getTime()) ? new Date(`${getISTDateStr()}T23:59:59.999+05:30`) : d;
+};
+
+const formatISTTime = (value) => {
+    if (!value) return "N/A";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return "N/A";
+    return d.toLocaleTimeString("en-IN", {
+        timeZone: IST_TIME_ZONE,
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+    });
+};
+
+const formatISTDate = (value) => {
+    if (!value) return "DATE";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return "DATE";
+    return d.toLocaleDateString("en-IN", {
+        timeZone: IST_TIME_ZONE,
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+    });
+};
+
+const formatISTDateTime = (value) => {
+    if (!value) return "N/A";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return "N/A";
+    return d.toLocaleString("en-IN", {
+        timeZone: IST_TIME_ZONE,
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+    });
+};
+
+/* =========================================================
    UPDATE LOCATION
 ========================================================= */
 
@@ -509,25 +572,9 @@ const getNotCheckedIn = async (
                 },
             });
 
-        const startOfDay =
-            new Date();
-
-        startOfDay.setHours(
-            0,
-            0,
-            0,
-            0
-        );
-
-        const endOfDay =
-            new Date();
-
-        endOfDay.setHours(
-            23,
-            59,
-            59,
-            999
-        );
+        const todayIST = getISTDateStr();
+        const startOfDay = parseISTStartOfDay(todayIST);
+        const endOfDay = parseISTEndOfDay(todayIST);
 
         const notCheckedInUsers =
             [];
@@ -660,7 +707,7 @@ const getDistanceReport = async (
 
         if (fromDate) {
             startDate = new Date(
-                `${fromDate}T00:00:00.000Z`
+                `${fromDate}T00:00:00.000+05:30`
             );
 
             if (
@@ -680,7 +727,7 @@ const getDistanceReport = async (
 
         if (toDate) {
             endDate = new Date(
-                `${toDate}T23:59:59.999Z`
+                `${toDate}T23:59:59.999+05:30`
             );
 
             if (
@@ -1024,8 +1071,8 @@ const getDailyRoute = async (req, res) => {
             return res.status(400).json({ success: false, message: "userId is required" });
         }
 
-        // Safe Date Normalization (handles DD-MM-YYYY and YYYY-MM-DD)
-        let normalizedDate = (date || new Date().toISOString().split("T")[0]).trim();
+        // Safe Date Normalization (handles DD-MM-YYYY and YYYY-MM-DD in IST)
+        let normalizedDate = (date || getISTDateStr()).trim();
         if (normalizedDate.includes("-")) {
             const parts = normalizedDate.split("-");
             if (parts[0].length === 2 && parts[2].length === 4) {
@@ -1033,12 +1080,12 @@ const getDailyRoute = async (req, res) => {
             }
         }
 
-        let startOfDay = new Date(`${normalizedDate}T00:00:00.000Z`);
-        let endOfDay = new Date(`${normalizedDate}T23:59:59.999Z`);
+        let startOfDay = parseISTStartOfDay(normalizedDate);
+        let endOfDay = parseISTEndOfDay(normalizedDate);
         if (isNaN(startOfDay.getTime()) || isNaN(endOfDay.getTime())) {
-            const todayStr = new Date().toISOString().split("T")[0];
-            startOfDay = new Date(`${todayStr}T00:00:00.000Z`);
-            endOfDay = new Date(`${todayStr}T23:59:59.999Z`);
+            const todayStr = getISTDateStr();
+            startOfDay = parseISTStartOfDay(todayStr);
+            endOfDay = parseISTEndOfDay(todayStr);
             normalizedDate = todayStr;
         }
 
@@ -1146,8 +1193,8 @@ const getDailyRoute = async (req, res) => {
             }
 
             const inDate = ci.checkInAt ? new Date(ci.checkInAt) : new Date();
-            const dateTag = isNaN(inDate.getTime()) ? "DATE" : inDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }).replace(/\s+/g, "_");
-            const timeTag = isNaN(inDate.getTime()) ? "TIME" : inDate.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }).replace(/\s+/g, "_");
+            const dateTag = isNaN(inDate.getTime()) ? "DATE" : formatISTDate(inDate).replace(/\s+/g, "_");
+            const timeTag = isNaN(inDate.getTime()) ? "TIME" : formatISTTime(inDate).replace(/\s+/g, "_");
             const userName = (user?.name || "Supervisor").replace(/\s+/g, "");
             const userPhone = user?.phone || "0000";
             const customCheckInId = `${userName}${userPhone}-${dateTag}_${timeTag}`;
@@ -1158,7 +1205,7 @@ const getDailyRoute = async (req, res) => {
                 type: "CHECK_IN",
                 locationName: ci.site?.name || "Site Check-In",
                 siteCode: ci.site?.siteCode || "",
-                time: ci.checkInAt ? new Date(ci.checkInAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "N/A",
+                time: ci.checkInAt ? formatISTTime(ci.checkInAt) : "N/A",
                 timeFull: ci.checkInAt,
                 latitude: ci.checkInLatitude || (locationLogs[0] ? locationLogs[0].latitude : 30.901),
                 longitude: ci.checkInLongitude || (locationLogs[0] ? locationLogs[0].longitude : 75.857),
@@ -1194,7 +1241,7 @@ const getDailyRoute = async (req, res) => {
                 stopNumber: stopNumber++,
                 type: "SITE_VISIT",
                 locationName: v.site?.name || "Site Inspection",
-                time: v.visitAt ? new Date(v.visitAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "N/A",
+                time: v.visitAt ? formatISTTime(v.visitAt) : "N/A",
                 timeFull: v.visitAt,
                 latitude: v.latitude || (v.site ? v.site.latitude : 30.901),
                 longitude: v.longitude || (v.site ? v.site.longitude : 75.857),
@@ -1204,10 +1251,10 @@ const getDailyRoute = async (req, res) => {
                 address: v.site?.address ? `${v.site.address}, ${v.site.city || ""} ${v.site.state || ""}` : "Industrial Area",
                 visitId: v.id,
                 status: v.status || "VERIFIED",
-                completedOn: v.visitAt ? new Date(v.visitAt).toLocaleString("en-IN") : "N/A",
+                completedOn: v.visitAt ? formatISTDateTime(v.visitAt) : "N/A",
                 assignTo: user?.name || "Supervisor",
                 scheduledBy: "Admin",
-                scheduledOn: v.createdAt ? new Date(v.createdAt).toISOString().split("T")[0] : "N/A",
+                scheduledOn: v.createdAt ? getISTDateStr(v.createdAt) : "N/A",
                 visit: v,
                 auditAnswers: v.auditSubmission?.answers || [],
                 isAlternate: isAlt,
@@ -1245,8 +1292,8 @@ const getSupervisorDailyBreakdown = async (req, res) => {
             return res.status(400).json({ success: false, message: "userId is required" });
         }
 
-        const startDate = fromDate ? new Date(`${fromDate}T00:00:00.000Z`) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-        const endDate = toDate ? new Date(`${toDate}T23:59:59.999Z`) : new Date();
+        const startDate = fromDate ? parseISTStartOfDay(fromDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const endDate = toDate ? parseISTEndOfDay(toDate) : new Date();
 
         const logs = await prisma.locationLog.findMany({
             where: {
@@ -1259,7 +1306,7 @@ const getSupervisorDailyBreakdown = async (req, res) => {
 
         const dayMap = {};
         for (const log of logs) {
-            const dateStr = log.recordedAt.toISOString().split("T")[0];
+            const dateStr = getISTDateStr(log.recordedAt);
             if (!dayMap[dateStr]) dayMap[dateStr] = [];
             dayMap[dateStr].push(log);
         }
@@ -1290,8 +1337,8 @@ const getSupervisorDailyBreakdown = async (req, res) => {
             success: true,
             data: {
                 userId,
-                fromDate: startDate.toISOString().split("T")[0],
-                toDate: endDate.toISOString().split("T")[0],
+                fromDate: getISTDateStr(startDate),
+                toDate: getISTDateStr(endDate),
                 totalDays: days.length,
                 days,
             },

@@ -36,6 +36,51 @@ const parseDate = (value, end = false) => {
         : date;
 };
 
+// Keep the dashboard's Missed Task count consistent with the supervisor app
+// and the Task Report: only overdue SCHEDULED tasks are considered missed.
+const isMissedScheduledTask = (task, now = Date.now()) => {
+    const scheduledAt = task?.scheduledAt
+        ? new Date(task.scheduledAt)
+        : null;
+
+    if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) {
+        return false;
+    }
+
+    const description = String(task.description || "");
+    const range = description.match(
+        /Schedule range:\s*(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})/i
+    );
+    const wholeDay = task.wholeDay === true || /Scheduled for whole day\./i.test(description);
+
+    let deadline = scheduledAt;
+
+    if (range) {
+        const dueTime = wholeDay
+            ? "23:59:59.999"
+            : scheduledAt.toLocaleTimeString("en-GB", {
+                timeZone: "Asia/Kolkata",
+                hour12: false,
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+            });
+
+        deadline = new Date(`${range[2]}T${dueTime}+05:30`);
+    } else if (wholeDay) {
+        const scheduledDateInIndia = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "Asia/Kolkata",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+        }).format(scheduledAt);
+
+        deadline = new Date(`${scheduledDateInIndia}T23:59:59.999+05:30`);
+    }
+
+    return !Number.isNaN(deadline.getTime()) && deadline.getTime() < now;
+};
+
 const parseList = (value) => {
     if (value === undefined) {
         return null;
@@ -995,6 +1040,24 @@ const getDashboard = async (
                 }),
             ]);
 
+        // Count missed tasks using the same scheduled-time / schedule-range /
+        // whole-day deadline rules used by the supervisor app.
+        const missedTaskCandidates = await prisma.task.findMany({
+            where: {
+                ...taskBaseWhere,
+                status: "SCHEDULED",
+            },
+            select: {
+                scheduledAt: true,
+                description: true,
+                wholeDay: true,
+            },
+        });
+
+        const missedTaskCount = missedTaskCandidates.filter((task) =>
+            isMissedScheduledTask(task)
+        ).length;
+
         // =====================================================
         // CHECK-IN / CHECK-OUT
         // =====================================================
@@ -1861,6 +1924,9 @@ const getDashboard = async (
 
                     completed:
                         completedTasks,
+
+                    missed:
+                        missedTaskCount,
                 },
 
                 // =========================================
