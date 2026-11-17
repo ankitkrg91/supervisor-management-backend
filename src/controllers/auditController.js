@@ -1,378 +1,353 @@
 import prisma from "../config/prisma.js";
 
-const extractTaskIdFromNotes = (notes) => {
-    if (typeof notes !== "string" || !notes.trim()) return null;
-    const match = notes.match(/Task ID:\s*([a-f0-9-]{36})/i);
-    return match ? match[1] : null;
-};
-
-const visitInclude = {
-    user: {
-        select: { id: true, name: true, email: true, phone: true, role: true, status: true },
-    },
-    site: {
-        select: {
-            id: true, name: true, siteCode: true, address: true,
-            city: true, state: true, pincode: true, latitude: true, longitude: true,
-        },
-    },
-    auditSubmission: {
-        select: {
-            id: true,
-            templateId: true,
-            submittedAt: true,
-            answers: {
-                select: {
-                    id: true,
-                    questionNo: true,
-                    questionText: true,
-                    booleanValue: true,
-                    textValue: true,
-                },
-                orderBy: { questionNo: "asc" },
-            },
-        },
-    },
-};
-
-const createVisit = async (req, res) => {
+const createAuditTemplate = async (req, res) => {
     try {
-        const userId = req.user.userId;
-        const {
-            siteId, visitAt, reportType, clientName, branch,
-            region, latitude, longitude, photoUrl, photoFileId, notes,
-            isEmergencyAudit, emergencyReason, emergencyRemark,
-        } = req.body || {};
-
-        if (!siteId) {
-            return res.status(400).json({ success: false, message: "siteId is required" });
+        const { name, description } = req.body;
+        if (!name || !name.trim()) {
+            return res.status(400).json({ success: false, message: "Template name is required" });
         }
-
-        const user = await prisma.user.findUnique({
-            where: { id: userId },
-            select: { id: true, name: true, email: true, role: true, status: true },
+        const template = await prisma.auditTemplate.create({
+            data: { name: name.trim(), description: description?.trim() || null, isActive: true },
         });
+        return res.status(201).json({ success: true, data: { template } });
+    } catch (error) {
+        console.error("Create audit template error:", error);
+        return res.status(500).json({ success: false, message: "Failed to create audit template" });
+    }
+};
 
-        if (!user) return res.status(404).json({ success: false, message: "User not found" });
-        if (user.status !== "ACTIVE") return res.status(403).json({ success: false, message: "User account is inactive" });
-        if (user.role !== "SUPERVISOR") return res.status(403).json({ success: false, message: "Only active Supervisors can create visits" });
-
-        const site = await prisma.site.findUnique({
-            where: { id: siteId },
-            select: {
-                id: true, name: true, siteCode: true, status: true,
-                address: true, city: true, state: true, pincode: true, latitude: true, longitude: true,
-            },
+const getAuditTemplates = async (req, res) => {
+    try {
+        const templates = await prisma.auditTemplate.findMany({
+            orderBy: { createdAt: "desc" },
+            include: { _count: { select: { questions: true } } },
         });
+        return res.status(200).json({ success: true, data: { templates } });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: "Failed to fetch audit templates" });
+    }
+};
 
-        if (!site) return res.status(404).json({ success: false, message: "Site not found" });
-        if (site.status !== "ACTIVE") return res.status(400).json({ success: false, message: "Site is inactive" });
+const updateAuditTemplate = async (req, res) => {
+    try {
+        const { templateId } = req.params;
+        const { name, description, isActive } = req.body;
+        const updateData = {};
+        if (name !== undefined) updateData.name = String(name).trim();
+        if (description !== undefined) updateData.description = description ? String(description).trim() : null;
+        if (isActive !== undefined) updateData.isActive = Boolean(isActive);
+        const template = await prisma.auditTemplate.update({
+            where: { id: templateId },
+            data: updateData,
+        });
+        return res.status(200).json({ success: true, data: { template } });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: "Failed to update audit template" });
+    }
+};
 
-        const cleanNotes = typeof notes === "string" && notes.trim() ? notes.trim() : null;
-        const emergencyMarker = cleanNotes
-            ? cleanNotes.match(/\[EMERGENCY_AUDIT\]:\s*([^\n|]+)(?:\s*\|\s*([^\n]+))?/i)
-            : null;
-        const requestedReportType = typeof reportType === "string" ? reportType.trim().toUpperCase() : "";
-        const isEmergencyAuditVisit = isEmergencyAudit === true
-            || requestedReportType === "EMERGENCY AUDIT"
-            || requestedReportType === "EMERGENCY_AUDIT"
-            || Boolean(emergencyMarker);
-
-        const cleanEmergencyReason = String(
-            typeof emergencyReason === "string" && emergencyReason.trim()
-                ? emergencyReason.trim()
-                : emergencyMarker?.[1] || ""
-        ).trim();
-        const cleanEmergencyRemark = String(
-            typeof emergencyRemark === "string" && emergencyRemark.trim()
-                ? emergencyRemark.trim()
-                : emergencyMarker?.[2] || ""
-        ).trim();
-
-        if (isEmergencyAuditVisit) {
-            if (cleanEmergencyReason.length < 3) {
-                return res.status(400).json({ success: false, message: "Emergency audit reason is required" });
-            }
-            if (cleanEmergencyRemark.length < 3) {
-                return res.status(400).json({ success: false, message: "Emergency audit remark is required" });
-            }
+const addAuditQuestion = async (req, res) => {
+    try {
+        const { templateId } = req.params;
+        const { questionNo, question, type, isRequired } = req.body;
+        const numericNo = Number(questionNo);
+        if (!numericNo || !question?.trim()) {
+            return res.status(400).json({ success: false, message: "Question number and text are required" });
         }
-
-        // A standalone emergency audit is not linked to, or blocked by, a scheduled task.
-        const taskId = isEmergencyAuditVisit ? null : extractTaskIdFromNotes(cleanNotes);
-        let assignedTask = null;
-
-        if (!isEmergencyAuditVisit) {
-            if (taskId) {
-                assignedTask = await prisma.task.findUnique({
-                    where: { id: taskId },
-                    select: { id: true, title: true, status: true, siteId: true, assignedToId: true },
-                });
-                if (!assignedTask) return res.status(404).json({ success: false, message: "Task not found" });
-                if (assignedTask.assignedToId !== userId) return res.status(403).json({ success: false, message: "Task is not assigned to logged-in Supervisor" });
-                if (assignedTask.siteId !== siteId) return res.status(403).json({ success: false, message: "Task belongs to a different site" });
-                if (assignedTask.status === "CANCELLED") return res.status(400).json({ success: false, message: "Cancelled tasks cannot create visits" });
-            } else {
-                assignedTask = await prisma.task.findFirst({
-                    where: { assignedToId: userId, siteId, status: { not: "CANCELLED" } },
-                    orderBy: { scheduledAt: "asc" },
-                });
-                if (!assignedTask) return res.status(403).json({ success: false, message: "No active task is assigned for this site" });
-            }
-        }
-
-        const parsedVisitAt = visitAt ? new Date(visitAt) : new Date();
-        if (Number.isNaN(parsedVisitAt.getTime())) {
-            return res.status(400).json({ success: false, message: "Invalid visit date/time" });
-        }
-
-        const parsedLatitude = latitude !== undefined && latitude !== null && latitude !== "" ? Number(latitude) : null;
-        const parsedLongitude = longitude !== undefined && longitude !== null && longitude !== "" ? Number(longitude) : null;
-
-        const cleanPhotoUrl = typeof photoUrl === "string" && photoUrl.trim() ? photoUrl.trim() : null;
-        const cleanPhotoFileId = typeof photoFileId === "string" && photoFileId.trim() ? photoFileId.trim() : null;
-
-        // Normal visits may update today's existing check-in evidence. Every emergency
-        // audit must create its own immutable visit row, even on the same site/day.
-        let existingVisit = null;
-        if (!isEmergencyAuditVisit) {
-            if (taskId) {
-                existingVisit = await prisma.visit.findFirst({
-                    where: { userId, siteId, notes: { contains: `Task ID: ${taskId}` } },
-                    orderBy: { visitAt: "desc" },
-                    include: visitInclude,
-                });
-            }
-            if (!existingVisit) {
-                const startOfDay = new Date();
-                startOfDay.setHours(0, 0, 0, 0);
-                existingVisit = await prisma.visit.findFirst({
-                    where: { userId, siteId, visitAt: { gte: startOfDay }, auditSubmission: { is: null } },
-                    orderBy: { visitAt: "desc" },
-                    include: visitInclude,
-                });
-            }
-        }
-
-        if (existingVisit) {
-            const updateData = {};
-            if (cleanPhotoUrl) updateData.photoUrl = cleanPhotoUrl;
-            if (cleanPhotoFileId) updateData.photoFileId = cleanPhotoFileId;
-            if (parsedLatitude !== null) updateData.latitude = parsedLatitude;
-            if (parsedLongitude !== null) updateData.longitude = parsedLongitude;
-            if (cleanNotes) {
-                let finalNotes = cleanNotes;
-                // Preserve [ALTERNATE_CHECKIN] tag if already present on this visit
-                if (existingVisit.notes && existingVisit.notes.includes("[ALTERNATE_CHECKIN]") && !finalNotes.includes("[ALTERNATE_CHECKIN]")) {
-                    const match = existingVisit.notes.match(/\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/);
-                    if (match) {
-                        finalNotes = `${finalNotes}\n[ALTERNATE_CHECKIN]: ${match[1]}`;
-                    }
-                }
-                // Preserve [CHECKOUT_SELFIE] tag if already present on this visit
-                if (existingVisit.notes && existingVisit.notes.includes("[CHECKOUT_SELFIE]") && !finalNotes.includes("[CHECKOUT_SELFIE]")) {
-                    const mOut = existingVisit.notes.match(/\[CHECKOUT_SELFIE\]:\s*([^\n]+)/);
-                    if (mOut) {
-                        finalNotes = `${finalNotes}\n[CHECKOUT_SELFIE]: ${mOut[1]}`;
-                    }
-                }
-                updateData.notes = finalNotes;
-            }
-            if (typeof reportType === "string" && reportType.trim()) updateData.reportType = reportType.trim();
-            if (typeof clientName === "string" && clientName.trim()) updateData.clientName = clientName.trim();
-
-            const updatedVisit = await prisma.visit.update({
-                where: { id: existingVisit.id },
-                data: updateData,
-                include: visitInclude,
+        const existing = await prisma.auditQuestion.findFirst({
+            where: { templateId, questionNo: numericNo, isActive: true },
+        });
+        if (existing) {
+            const updated = await prisma.auditQuestion.update({
+                where: { id: existing.id },
+                data: { question: question.trim(), type: type || "YES_NO", isRequired: isRequired !== false, isActive: true },
             });
-
-            return res.status(200).json({
-                success: true,
-                message: "Existing visit updated with site evidence photos",
-                data: { visit: updatedVisit },
-            });
+            return res.status(200).json({ success: true, data: { question: updated } });
         }
-
-        // Make emergency metadata explicit in Notes so existing detail/report views
-        // can recognise it without a database migration.
-        let createNotes = cleanNotes;
-        if (isEmergencyAuditVisit) {
-            const existingEmergencyLine = /\[EMERGENCY_AUDIT\]:[^\n]*(?:\n|$)/i;
-            if (createNotes) createNotes = createNotes.replace(existingEmergencyLine, "").trim();
-            const emergencyLine = `[EMERGENCY_AUDIT]: ${cleanEmergencyReason} | ${cleanEmergencyRemark}`;
-            createNotes = createNotes ? `${emergencyLine}\n${createNotes}` : emergencyLine;
-        }
-
-        // Alternate check-in reason is carried forward for ordinary visits only.
-        if (!isEmergencyAuditVisit && !createNotes?.includes("[ALTERNATE_CHECKIN]")) {
-            const startOfDay = new Date();
-            startOfDay.setHours(0, 0, 0, 0);
-            const altVisit = await prisma.visit.findFirst({
-                where: { userId, siteId, visitAt: { gte: startOfDay }, notes: { contains: "[ALTERNATE_CHECKIN]" } },
-            });
-            if (altVisit?.notes) {
-                const match = altVisit.notes.match(/\[ALTERNATE_CHECKIN\]:\s*([^\n]+)/);
-                if (match) {
-                    createNotes = createNotes ? `${createNotes}\n[ALTERNATE_CHECKIN]: ${match[1]}` : `[ALTERNATE_CHECKIN]: ${match[1]}`;
-                }
-            }
-        }
-
-        const visit = await prisma.visit.create({
+        const created = await prisma.auditQuestion.create({
             data: {
-                userId,
-                siteId,
-                visitAt: parsedVisitAt,
-                reportType: isEmergencyAuditVisit
-                    ? "Emergency Audit"
-                    : (typeof reportType === "string" && reportType.trim() ? reportType.trim() : null),
-                clientName: typeof clientName === "string" && clientName.trim() ? clientName.trim() : null,
-                branch: typeof branch === "string" && branch.trim() ? branch.trim() : null,
-                region: typeof region === "string" && region.trim() ? region.trim() : null,
-                latitude: parsedLatitude,
-                longitude: parsedLongitude,
-                photoUrl: cleanPhotoUrl,
-                photoFileId: cleanPhotoFileId,
-                notes: createNotes,
-                status: "PENDING",
+                templateId,
+                questionNo: numericNo,
+                question: question.trim(),
+                type: type || "YES_NO",
+                isRequired: isRequired !== false,
+                isActive: true,
             },
-            include: visitInclude,
+        });
+        return res.status(201).json({ success: true, data: { question: created } });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: "Failed to add audit question" });
+    }
+};
+
+const updateAuditQuestion = async (req, res) => {
+    try {
+        const { questionId } = req.params;
+        const { questionNo, question, type, isRequired, isActive } = req.body;
+        const updateData = {};
+        if (questionNo !== undefined) updateData.questionNo = Number(questionNo);
+        if (question !== undefined) updateData.question = String(question).trim();
+        if (type !== undefined) updateData.type = type;
+        if (isRequired !== undefined) updateData.isRequired = Boolean(isRequired);
+        if (isActive !== undefined) updateData.isActive = Boolean(isActive);
+
+        const updated = await prisma.auditQuestion.update({
+            where: { id: questionId },
+            data: updateData,
+        });
+        return res.status(200).json({ success: true, data: { question: updated } });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: "Failed to update audit question" });
+    }
+};
+
+const deleteAuditQuestion = async (req, res) => {
+    try {
+        const { questionId } = req.params;
+        const deleted = await prisma.auditQuestion.update({
+            where: { id: questionId },
+            data: { isActive: false },
+        });
+        return res.status(200).json({ success: true, data: { question: deleted } });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: "Failed to delete audit question" });
+    }
+};
+
+const getAuditTemplateById = async (req, res) => {
+    try {
+        const template = await prisma.auditTemplate.findUnique({
+            where: { id: req.params.templateId },
+            include: { questions: { where: { isActive: true }, orderBy: { questionNo: "asc" } } },
+        });
+        if (!template) return res.status(404).json({ success: false, message: "Template not found" });
+        return res.status(200).json({ success: true, data: { template } });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: "Failed to fetch audit template" });
+    }
+};
+
+const getAuditChecklist = async (req, res) => {
+    try {
+        let checklist = await prisma.auditTemplate.findFirst({
+            where: { name: "Site Audit Checklist" },
+            include: {
+                questions: {
+                    orderBy: { questionNo: "asc" },
+                },
+            },
+        });
+
+        if (!checklist) {
+            checklist = await prisma.auditTemplate.create({
+                data: { name: "Site Audit Checklist", description: "Supervisor site audit checklist", isActive: true },
+                include: { questions: { orderBy: { questionNo: "asc" } } },
+            });
+        }
+
+        // Agar kisi script ne questions ko inactive kar diya tha, to sabhi questions wapas active karein
+        const hasInactive = (checklist.questions || []).some((q) => q.isActive === false);
+        if (hasInactive) {
+            await prisma.auditQuestion.updateMany({
+                where: { templateId: checklist.id },
+                data: { isActive: true },
+            });
+        }
+
+        // Renumber active questions sequentially (1, 2, 3...) for clean display in App & Admin
+        const sequentialQuestions = (checklist.questions || []).map((q, idx) => ({
+            ...q,
+            isActive: true,
+            originalQuestionNo: q.questionNo,
+            questionNo: idx + 1,
+        }));
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                checklist: {
+                    ...checklist,
+                    questions: sequentialQuestions,
+                },
+            },
+        });
+    } catch (error) {
+        console.error("Get audit checklist error:", error);
+        return res.status(500).json({ success: false, message: "Failed to fetch audit checklist" });
+    }
+};
+
+const createChecklistQuestion = async (req, res) => {
+    try {
+        const { questionNo, question, type, isRequired } = req.body;
+        const numericNo = Number(questionNo);
+        if (!numericNo || !question?.trim()) {
+            return res.status(400).json({ success: false, message: "Question number and text are required" });
+        }
+        let template = await prisma.auditTemplate.findFirst({ where: { name: "Site Audit Checklist" } });
+        if (!template) {
+            template = await prisma.auditTemplate.create({
+                data: { name: "Site Audit Checklist", description: "Supervisor site audit checklist", isActive: true },
+            });
+        }
+        const existing = await prisma.auditQuestion.findFirst({
+            where: { templateId: template.id, questionNo: numericNo, isActive: true },
+        });
+        if (existing) {
+            const updated = await prisma.auditQuestion.update({
+                where: { id: existing.id },
+                data: { question: question.trim(), type: type || existing.type || "YES_NO", isRequired: isRequired !== false, isActive: true },
+            });
+            return res.status(200).json({ success: true, data: { question: updated } });
+        }
+        const created = await prisma.auditQuestion.create({
+            data: {
+                templateId: template.id,
+                questionNo: numericNo,
+                question: question.trim(),
+                type: type || "YES_NO",
+                isRequired: isRequired !== false,
+                isActive: true,
+            },
+        });
+        return res.status(201).json({ success: true, data: { question: created } });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: "Failed to create checklist question" });
+    }
+};
+
+const updateChecklistQuestion = updateAuditQuestion;
+const deleteChecklistQuestion = deleteAuditQuestion;
+
+const submitAudit = async (req, res) => {
+    try {
+        const { visitId } = req.params;
+        const { templateId, answers } = req.body;
+
+        if (!templateId) return res.status(400).json({ success: false, message: "Template ID is required" });
+        if (!Array.isArray(answers) || answers.length === 0) {
+            return res.status(400).json({ success: false, message: "Audit answers are required" });
+        }
+
+        const visit = await prisma.visit.findUnique({ where: { id: visitId } });
+        if (!visit) return res.status(404).json({ success: false, message: "Visit not found" });
+
+        const template = await prisma.auditTemplate.findUnique({
+            where: { id: templateId },
+            include: { questions: { where: { isActive: true }, orderBy: { questionNo: "asc" } } },
+        });
+        if (!template) return res.status(404).json({ success: false, message: "Audit template not found" });
+
+        const questionMap = new Map(template.questions.map((q) => [q.id, q]));
+
+        // If a submission already exists for this visit, remove old answers & submission so re-submit works cleanly
+        const existingSubmission = await prisma.auditSubmission.findUnique({ where: { visitId } });
+        if (existingSubmission) {
+            await prisma.auditAnswer.deleteMany({ where: { submissionId: existingSubmission.id } });
+            await prisma.auditSubmission.delete({ where: { id: existingSubmission.id } });
+        }
+
+        const validAnswers = answers.filter((a) => a && a.questionId && questionMap.has(a.questionId));
+
+        const submission = await prisma.auditSubmission.create({
+            data: {
+                visitId,
+                templateId,
+                answers: {
+                    create: validAnswers.map((answer, idx) => {
+                        const question = questionMap.get(answer.questionId);
+                        const isTextType = question.type === "TEXT";
+                        const hasPhotos = Array.isArray(answer.photos) && answer.photos.length > 0;
+                        const hasTextValue = answer.textValue !== undefined && answer.textValue !== null && String(answer.textValue).trim().length > 0;
+
+                        return {
+                            questionId: question.id,
+                            questionNo: idx + 1, // Always sequential 1, 2, 3...
+                            questionText: question.question,
+                            booleanValue: typeof answer.booleanValue === "boolean"
+                                ? answer.booleanValue
+                                : (isTextType ? null : true),
+                            textValue: hasTextValue
+                                ? String(answer.textValue).trim()
+                                : hasPhotos
+                                    ? JSON.stringify(answer.photos)
+                                    : null,
+                        };
+                    }),
+                },
+            },
+            include: {
+                answers: { orderBy: { questionNo: "asc" } },
+                template: { select: { id: true, name: true, description: true } },
+                visit: { select: { id: true, visitAt: true, status: true, userId: true, siteId: true } },
+            },
         });
 
         return res.status(201).json({
             success: true,
-            message: "Visit created successfully",
-            data: { visit },
+            message: "Audit submitted successfully",
+            data: { submission },
         });
     } catch (error) {
-        console.error("Create visit error:", error);
-        return res.status(500).json({ success: false, message: "Failed to create visit" });
+        console.error("Submit audit error:", error);
+        return res.status(500).json({ success: false, message: "Failed to submit audit" });
     }
 };
 
-const getVisits = async (req, res) => {
+const getAuditSubmission = async (req, res) => {
     try {
-        const currentUser = req.user;
-        const { from, to, status, role, search, siteId, region, branch, clientName, page = "1", limit = "100" } = req.query;
-        const where = {};
-
-        if (currentUser.role === "SUPERVISOR") where.userId = currentUser.userId;
-        where.user = { role: role || "SUPERVISOR" };
-        if (siteId) where.siteId = siteId;
-
-        if (status) {
-            const allowed = ["PENDING", "VERIFIED", "UNVERIFIED", "REJECTED"];
-            if (!allowed.includes(status)) return res.status(400).json({ success: false, message: "Invalid visit status" });
-            where.status = status;
-        }
-
-        if (region && region !== "ALL") where.region = region;
-        if (branch && branch !== "ALL") where.branch = branch;
-        if (clientName && clientName !== "ALL") where.clientName = { contains: clientName, mode: "insensitive" };
-
-        if (from || to) {
-            where.visitAt = {};
-            if (from) where.visitAt.gte = new Date(`${from}T00:00:00.000Z`);
-            if (to) where.visitAt.lte = new Date(`${to}T23:59:59.999Z`);
-        }
-
-        // Sirf wahi visits dikhao jinme Audit submit hua hai (Check-in/Check-out only records ko hide rakho)
-        const auditOnlyFilter = {
-            OR: [
-                { auditSubmission: { isNot: null } },
-                { notes: { contains: "[VINICA_VSF_REPORT]:" } },
-                { notes: { contains: "[EMERGENCY_AUDIT]:" } },
-                { reportType: { contains: "VSF", mode: "insensitive" } },
-                { reportType: { contains: "Emergency Audit", mode: "insensitive" } },
-            ],
-        };
-
-        where.AND = [auditOnlyFilter];
-
-        if (search && search.trim()) {
-            const q = search.trim();
-            where.AND.push({
-                OR: [
-                    { user: { name: { contains: q, mode: "insensitive" } } },
-                    { user: { email: { contains: q, mode: "insensitive" } } },
-                    { site: { name: { contains: q, mode: "insensitive" } } },
-                    { site: { siteCode: { contains: q, mode: "insensitive" } } },
-                    { clientName: { contains: q, mode: "insensitive" } },
-                ],
-            });
-        }
-
-        const pageNumber = Math.max(parseInt(page, 10) || 1, 1);
-        const limitNumber = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 100);
-        const skip = (pageNumber - 1) * limitNumber;
-
-        const [total, visits] = await Promise.all([
-            prisma.visit.count({ where }),
-            prisma.visit.findMany({
-                where,
-                skip,
-                take: limitNumber,
-                orderBy: { visitAt: "desc" },
-                include: visitInclude,
-            }),
-        ]);
-
-        return res.status(200).json({
-            success: true,
-            count: visits.length,
-            data: { visits },
-            pagination: {
-                page: pageNumber,
-                limit: limitNumber,
-                total,
-                totalPages: Math.ceil(total / limitNumber),
+        const { visitId } = req.params;
+        const submission = await prisma.auditSubmission.findUnique({
+            where: { visitId },
+            include: {
+                answers: { orderBy: { questionNo: "asc" } },
+                template: { select: { id: true, name: true, description: true } },
+                visit: {
+                    select: {
+                        id: true, visitAt: true, status: true, userId: true, siteId: true,
+                        user: { select: { id: true, name: true, email: true, role: true } },
+                        site: { select: { id: true, name: true, siteCode: true, city: true, state: true } },
+                    },
+                },
             },
         });
+
+        if (!submission) return res.status(404).json({ success: false, message: "Audit submission not found" });
+        return res.status(200).json({ success: true, data: { submission } });
     } catch (error) {
-        console.error("Get visits error:", error);
-        return res.status(500).json({ success: false, message: "Failed to fetch visits" });
+        console.error("Get audit submission error:", error);
+        return res.status(500).json({ success: false, message: "Failed to fetch audit submission" });
     }
 };
 
-const getVisitById = async (req, res) => {
-    try {
-        const visit = await prisma.visit.findUnique({
-            where: { id: req.params.id },
-            include: visitInclude,
-        });
-        if (!visit) return res.status(404).json({ success: false, message: "Visit not found" });
-        if (req.user.role === "SUPERVISOR" && visit.userId !== req.user.userId) {
-            return res.status(403).json({ success: false, message: "Access denied" });
-        }
-        return res.status(200).json({ success: true, data: { visit } });
-    } catch (error) {
-        console.error("Get visit by ID error:", error);
-        return res.status(500).json({ success: false, message: "Failed to fetch visit" });
-    }
+export {
+    createAuditTemplate,
+    getAuditTemplates,
+    updateAuditTemplate,
+    addAuditQuestion,
+    updateAuditQuestion,
+    deleteAuditQuestion,
+    getAuditTemplateById,
+    getAuditChecklist,
+    createChecklistQuestion,
+    updateChecklistQuestion,
+    deleteChecklistQuestion,
+    submitAudit,
+    getAuditSubmission,
 };
 
-const updateVisitStatus = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const status = String(req.body?.status || "").trim().toUpperCase();
-        if (!["VERIFIED", "UNVERIFIED", "REJECTED"].includes(status)) {
-            return res.status(400).json({ success: false, message: "Invalid visit status" });
-        }
-        const updatedVisit = await prisma.visit.update({
-            where: { id },
-            data: { status },
-            include: visitInclude,
-        });
-        return res.status(200).json({
-            success: true,
-            message: "Visit status updated successfully",
-            data: { visit: updatedVisit },
-        });
-    } catch (error) {
-        console.error("Update visit status error:", error);
-        return res.status(500).json({ success: false, message: "Failed to update visit status" });
-    }
+export default {
+    createAuditTemplate,
+    getAuditTemplates,
+    updateAuditTemplate,
+    addAuditQuestion,
+    updateAuditQuestion,
+    deleteAuditQuestion,
+    getAuditTemplateById,
+    getAuditChecklist,
+    createChecklistQuestion,
+    updateChecklistQuestion,
+    deleteChecklistQuestion,
+    submitAudit,
+    getAuditSubmission,
 };
-
-export { createVisit, getVisits, getVisitById, updateVisitStatus };
