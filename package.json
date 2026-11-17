@@ -104,12 +104,13 @@
     "undefsafe": "^2.0.5",
     "unpipe": "^1.0.0",
     "vary": "^1.1.2",
-    "wrappy": "^1.0.2"
+    "wrappy": "^1.0.2",
+    "prisma": "^7.10.1"
   },
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "postinstall": "prisma skills sync || exit 0"
+    "postinstall": "prisma generate"
   },
   "keywords": [],
   "author": "",

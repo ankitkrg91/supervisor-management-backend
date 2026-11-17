@@ -1262,7 +1262,7 @@ const getDailyRoute = async (req, res) => {
             });
         }
 
-        const isOnline = locationLogs.length > 0 && (Date.now() - new Date(locationLogs[locationLogs.length - 1].recordedAt).getTime()) < 12 * 60 * 1000;
+        const isOnline = locationLogs.length > 0 && (Date.now() - new Date(locationLogs[locationLogs.length - 1].recordedAt).getTime()) < 2 * 60 * 1000;
 
         return res.status(200).json({
             success: true,
@@ -1363,6 +1363,3 @@ export {
     getSupervisorDailyBreakdown,
     setSocketIO,
 };
-
-dashboardController
-JS
